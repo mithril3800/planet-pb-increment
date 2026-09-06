@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PLANET GENESIS QQ/PB｜作者：剩菜｜v1.4.8｜竞速榜计时修复+致谢前辈｜无随机/无概率"""
+"""PLANET GENESIS QQ/PB｜作者：剩菜，Mithril｜v1.4.9｜计数法更新"""
 import ast
 import base64
 import difflib
@@ -10,14 +10,14 @@ import re
 import time
 import zlib
 
-APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.4.8"
+APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.4.9"
 STATE_SCHEMA, GLOBAL_SCHEMA, SAVE_PREFIX = 4, 2, "json:"
 MAX_SAVE, MAX_DECOMP, MAX_PROTOCOL, MAX_CMD, MAX_GLOBAL_USERS, MAX_BUILD, MAX_NUM = 8 * 1024 * 1024, 8 * 1024 * 1024, 20 * 1024 * 1024, 4096, 5000, 1000, 1e300
 BASE_OFFLINE, OFFLINE_PER_TECH, MAX_OFFLINE = 8, 4, 72
 
 RM = {"energy": ("☀️", "恒星能"), "mineral": ("🪨", "矿物"), "water": ("💧", "水"), "air": ("🌫️", "大气"), "biomass": ("🌱", "生物量"), "civilization": ("🏙️", "文明")}
 RSRC_HINT = {"energy": "##planet tap 1 或 ##planet build 日照阵列", "mineral": "##planet build 地壳钻机", "water": "##planet build 融冰塔", "air": "##planet build 大气工厂", "biomass": "##planet build 生态穹顶", "civilization": "##planet build 城市节点"}
-
+AVAILABLE_NOTATIONS={"standard":"标准计数法","scientific":"科学计数法"}
 B = {
     "solar": {"name": "日照阵列", "icon": "☀️", "slots": 1, "bc": {"energy": 10}, "scale": 1.17, "rate": {"energy": 1}, "desc": "收集恒星辐射。每座 +1 恒星能/秒。"},
     "mine": {"name": "地壳钻机", "icon": "⛏️", "slots": 2, "bc": {"energy": 60}, "scale": 1.18, "rate": {"mineral": 0.35}, "desc": "开采地壳。每座 +0.35 矿物/秒。"},
@@ -131,7 +131,16 @@ def si(v, d=0, lo=None, hi=None):
 def st(v, d="", mx=100):
     return str(v).strip()[:mx] if v is not None else d
 
-def fm(v):
+hundreds=['', 'Ce', 'Dn', 'Tc', 'Qe', 'Qu', 'Sc', 'Si', 'Oe', 'Ne']
+tens=['', 'Dc', 'Vg', 'Tg', 'Qd', 'Qi', 'Se', 'St', 'Og', 'Nn']
+ones=['', 'U', 'D', 'T', 'Qa', 'Qt', 'Sx', 'Sp', 'Oc', 'No']
+def sc(exp):
+    level=exp//3-1
+    if level<3:
+        return "KMB"[level]
+    return ones[level%10]+tens[level//10%10]+hundreds[level//100%10]
+
+def fm(v,notation="standard"):
     v = cl(v)
     if v < 1000:
         if abs(v - round(v)) < 1e-9:
@@ -141,9 +150,16 @@ def fm(v):
         if v >= 10:
             return f"{v:,.2f}"
         return f"{v:,.3f}"
-    for t, s in [(1e30, "Qn"), (1e27, "Oc"), (1e24, "Sp"), (1e21, "Sx"), (1e18, "Qi"), (1e15, "Qa"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
-        if v >= t:
-            return f"{v/t:.3f}{s}"
+    if notation == "standard" or notation not in AVAILABLE_NOTATIONS:
+        for t, s in [(10**(3+3*n), sc(3+3*n)) for n in range(101,-1,-1)]:
+            if v >= t:
+                return f"{v/t:.3f}{s}"
+    elif notation == "scientific":
+        if v < 100000:
+            return f"{v:,.0f}"
+        else:
+            mantissa=v/(10**int(math.log10(v)))
+            return f"{mantissa:.3f}e{int(math.log10(v))}"
     return f"{v:,.0f}"
 
 def fs(s):
@@ -156,8 +172,8 @@ def fs(s):
         return f"{m}分{s}秒"
     return f"{s}秒"
 
-def rt(c):
-    return " + ".join([f"{fm(a)}{RM[k][0]}{RM[k][1]}" for k, a in c.items() if a]) or "0"
+def rt(c,nt="standard"):
+    return " + ".join([f"{fm(a,nt)}{RM[k][0]}{RM[k][1]}" for k, a in c.items() if a]) or "0"
 
 def _b64_encode(data):
     return base64.b64encode(data).decode('ascii')
@@ -236,7 +252,7 @@ def fresh_state(now=None):
     t = {k: 0 for k in T}
     r = {k: 0 for k in RM}
     r["energy"] = st_energy(t)
-    return {"schema": STATE_SCHEMA, "created_at": now, "last_tick": now, "resources": r, "cycle_generated": {k: 0 for k in RM}, "lifetime_generated": {k: 0 for k in RM}, "buildings": {k: 0 for k in B}, "orbit": "balance", "expansions": 0, "cores": 0, "cores_total": 0, "launches": 0, "techs": t, "taps": 0, "known_recipes": [], "clues_seen": [], "discoveries": [], "crafted_recipes": [], "challenge_claimed": [], "stage_seen": 0, "scan_count": 0, "last_crank": 0, "crank_count": 0, "milestones_claimed": [], "auras": [], "event_cooldown": 0, "crank_time_bonus": 0, "speedrun_record": 0}
+    return {"schema": STATE_SCHEMA, "created_at": now, "last_tick": now, "resources": r, "cycle_generated": {k: 0 for k in RM}, "lifetime_generated": {k: 0 for k in RM}, "buildings": {k: 0 for k in B}, "orbit": "balance", "expansions": 0, "cores": 0, "cores_total": 0, "launches": 0, "techs": t, "taps": 0, "known_recipes": [], "clues_seen": [], "discoveries": [], "crafted_recipes": [], "challenge_claimed": [], "stage_seen": 0, "scan_count": 0, "last_crank": 0, "crank_count": 0, "milestones_claimed": [], "auras": [], "event_cooldown": 0, "crank_time_bonus": 0, "speedrun_record": 0, "notation": "standard"}
 
 def fresh_global():
     return {"schema": GLOBAL_SCHEMA, "users": {}, "speedrun": {}}
@@ -298,6 +314,7 @@ def migrate_state(s, now=None):
     orb = OA.get(st(s.get("orbit"), "balance", 40).lower())
     if orb:
         base["orbit"] = orb
+    base["notation"] = s.get("notation","standard")
     base["schema"] = STATE_SCHEMA
     return base
 
@@ -465,27 +482,28 @@ def recipe_pair(f, snd):
 def challenge_progress(s, idx):
     rates = prod_rates(s)
     r = s["resources"]
+    notation = s.get("notation","standard")
     if idx == 0:
         ok = rates["energy"] >= 2.5
-        detail = f"恒星能 {fm(rates['energy'])}/2.50 每秒"
+        detail = f"恒星能 {fm(rates['energy'],notation)}/2.50 每秒"
     elif idx == 1:
         ok = rates["mineral"] >= 0.75 and r["energy"] >= 80
-        detail = f"矿物 {fm(rates['mineral'])}/0.75 每秒｜恒星能 {fm(r['energy'])}/80"
+        detail = f"矿物 {fm(rates['mineral'],notation)}/0.75 每秒｜恒星能 {fm(r['energy'],notation)}/80"
     elif idx == 2:
         ok = rates["water"] >= 0.25 and r["water"] >= 40
-        detail = f"水 {fm(rates['water'])}/0.25 每秒｜持有水 {fm(r['water'])}/40"
+        detail = f"水 {fm(rates['water'],notation)}/0.25 每秒｜持有水 {fm(r['water'],notation)}/40"
     elif idx == 3:
         ok = rates["air"] >= 0.10 and r["air"] >= 30
-        detail = f"大气 {fm(rates['air'])}/0.10 每秒｜持有大气 {fm(r['air'])}/30"
+        detail = f"大气 {fm(rates['air'],notation)}/0.10 每秒｜持有大气 {fm(r['air'],notation)}/30"
     elif idx == 4:
         ok = rates["biomass"] >= 0.030 and r["biomass"] >= 25
-        detail = f"生物量 {fm(rates['biomass'])}/0.030 每秒｜持有生物量 {fm(r['biomass'])}/25"
+        detail = f"生物量 {fm(rates['biomass'],notation)}/0.030 每秒｜持有生物量 {fm(r['biomass'],notation)}/25"
     elif idx == 5:
         ok = rates["civilization"] >= 0.008 and rates["energy"] >= 3
-        detail = f"文明 {fm(rates['civilization'])}/0.008 每秒｜恒星能 {fm(rates['energy'])}/3.00 每秒"
+        detail = f"文明 {fm(rates['civilization'],notation)}/0.008 每秒｜恒星能 {fm(rates['energy'],notation)}/3.00 每秒"
     else:
         ok = s["buildings"]["ring"] >= 1 and rates["civilization"] >= 0.015
-        detail = f"轨道环 {s['buildings']['ring']}/1｜文明 {fm(rates['civilization'])}/0.015 每秒"
+        detail = f"轨道环 {s['buildings']['ring']}/1｜文明 {fm(rates['civilization'],notation)}/0.015 每秒"
     return ok, detail
 
 def planet_code(s):
@@ -538,12 +556,13 @@ def parse_amt(v, d=1, mx=MAX_BUILD):
 
 def phase_progress(s):
     cur, nxt = planet_stage(s)
+    notation = s.get("notation","standard")
     if nxt is None:
         return f"{cur[1]} {cur[0]}｜已达到本轮最高阶段"
     _, _, res, thr, _ = nxt
     icon, name = RM[res]
     val = s["cycle_generated"][res]
-    return f"{cur[1]} {cur[0]}｜下一阶段：{nxt[0]}｜累计生成 {fm(val)}/{fm(thr)} {icon}{name}"
+    return f"{cur[1]} {cur[0]}｜下一阶段：{nxt[0]}｜累计生成 {fm(val,notation)}/{fm(thr,notation)} {icon}{name}"
 
 def formula_text():
     return """PLANET GENESIS｜精确公式
@@ -781,19 +800,20 @@ class Game:
         new_ms = self._check_milestones()
         rates = prod_rates(s)
         lines = [f"🪐 {APP_NAME}｜{self.nick}｜{planet_code(s)}", phase_progress(s)]
+        notation = self.state.get("notation","standard")
         for k, (icon, name) in RM.items():
-            line = f"{icon}{name} {fm(s['resources'][k])}｜+{fm(rates[k])}/s"
+            line = f"{icon} {name} {fm(s['resources'][k],notation)}｜+{fm(rates[k],notation)}/s"
             if rates[k] <= 1e-12:
                 line += f"｜来源：{RSRC_HINT[k]}"
             lines.append(line)
         crank_time = get_crank_duration(s)
         crank_cd = get_crank_cooldown(s)
-        lines.append(f"🔄 手摇｜加速{fm(crank_time/60)}分钟｜冷却{fm(crank_cd)}秒｜传动{s['buildings']['transmission']}座")
+        lines.append(f"🔄 手摇｜加速{fm(crank_time/60,notation)}分钟｜冷却{fm(crank_cd,notation)}秒｜传动{s['buildings']['transmission']}座")
         lines.append(f"🧱 槽位 {slots_used(s)}/{slot_cap(s)}｜轨道：{OM[s['orbit']][0]}")
         lines.append(f"💠 星核 {s['cores']}可用 / {s['cores_total']}累计｜🚀 启航 {s['launches']}次")
         if self.elapsed >= 60 and self.applied > 0:
             suffix = "（只结算" + fs(self.applied) + "上限）" if self.applied + 1 < self.elapsed else ""
-            nz = [f"+{fm(self.ogains[k])}{RM[k][0]}" for k in RM if self.ogains[k] > 0]
+            nz = [f"+{fm(self.ogains[k],notation)}{RM[k][0]}" for k in RM if self.ogains[k] > 0]
             lines.append(f"🌙 离线 {fs(self.elapsed)}{suffix}｜" + (" ".join(nz) if nz else "无被动产出"))
         gain = launch_gain(s)
         lines.append(f"🚀 {'已可启航｜+' + str(gain)+'星核' if gain else '启航进度｜文明 '+fm(s['cycle_generated']['civilization'])+'/1.000K'}")
@@ -809,6 +829,7 @@ class Game:
     def planet(self):
         s = self.state
         cur, nxt = planet_stage(s)
+        notation = self.state.get("notation","standard")
         lines = [f"          ☀️\n     ·     🛰️\n       {cur[1]}\n     {planet_code(s)}\n",
                  f"阶段：{cur[1]}{cur[0]}\n说明：{cur[4]}\n轨道：{OM[s['orbit']][0]}｜{OM[s['orbit']][1]}\n槽位：{slots_used(s)}/{slot_cap(s)}\n挑战：{SC[stage_idx(s)]['name']}｜##planet challenge (ch)",
                  "【本轮累计】"]
@@ -820,11 +841,12 @@ class Game:
             _, icon, res, thr, desc = nxt
             ico, n = RM[res]
             val = s["cycle_generated"][res]
-            lines.append(f"\n下一阶段：{icon}{nxt[0]}\n条件：{fm(val)}/{fm(thr)}{ico}{n}\n变化：{desc}")
+            lines.append(f"\n下一阶段：{icon}{nxt[0]}\n条件：{fm(val,notation)}/{fm(thr,notation)}{ico}{n}\n变化：{desc}")
         return "\n".join(lines)
 
     def tap(self, args):
         cnt = parse_amt(args[0] if args else None, 1, 100)
+        notation = self.state.get("notation","standard")
         if cnt == "max":
             cnt = 100
         mult = (1.20**self.state["techs"]["fusion"]) * (1 + 0.04 * self.state["cores_total"])
@@ -835,27 +857,29 @@ class Game:
         self.state["lifetime_generated"]["energy"] = cl(self.state["lifetime_generated"]["energy"] + gain)
         self.state["taps"] += cnt
         new_val = self.state["resources"]["energy"]
-        return f"☀️ 采光×{cnt}｜+{fm(gain)}恒星能｜{fm(old_val)} → {fm(new_val)}"
+        return f"☀️ 采光×{cnt}｜+{fm(gain,notation)}恒星能｜{fm(old_val,notation)} → {fm(new_val,notation)}"
 
     def building_list(self):
         s = self.state
         rates = prod_rates(s)
+        notation = self.state.get("notation","standard")
         lines = [f"🏗️ 建筑｜槽位{slots_used(s)}/{slot_cap(s)}｜倍率×{global_mult(s):.4f}｜轨道{OM[s['orbit']][0]}"]
         for k, info in B.items():
             cost = b_cost(s, k)
             prod = []
             for r, rate in info["rate"].items():
-                prod.append(f"+{fm(rate*global_mult(s))}/s{RM[r][1]}")
+                prod.append(f"+{fm(rate*global_mult(s),notation)}/s{RM[r][1]}")
             if k == "ring":
                 prod = ["每座全产×1.12"]
             if k == "transmission":
                 prod = [f"加速+0.2分钟/座 冷却-0.15秒/座"]
-            lines.append(f"{info['icon']}{info['name']}×{s['buildings'][k]}｜占{info['slots']}槽｜下一座{rt(cost)}｜{';'.join(prod)}")
+            lines.append(f"{info['icon']}{info['name']}×{s['buildings'][k]}｜占{info['slots']}槽｜下一座{rt(cost,notation)}｜{';'.join(prod)}")
         return "\n".join(lines)
 
     def build(self, args):
         if not args:
             return self.building_list()
+        notation = self.state.get("notation","standard")
         k = BA.get(args[0].lower())
         if not k:
             return "⚠ 未知建筑｜日照/钻机/融冰/大气/生态/城市/轨道环/传动"
@@ -879,12 +903,13 @@ class Game:
             cost = b_cost(self.state, k)
             if slots_used(self.state) + info["slots"] > slot_cap(self.state):
                 return f"⚠ 槽位不足｜{info['name']}需{info['slots']}槽｜{slots_used(self.state)}/{slot_cap(self.state)}｜##planet expand (e)"
-            return f"⚠ 资源不足｜需要{rt(cost)}"
-        return f"{info['icon']} 建造+{bought}｜{info['name']}×{self.state['buildings'][k]}\n消耗{rt({k:v for k,v in spent.items() if v})}｜槽位{slots_used(self.state)}/{slot_cap(self.state)}"
+            return f"⚠ 资源不足｜需要{rt(cost,notation)}"
+        return f"{info['icon']} 建造+{bought}｜{info['name']}×{self.state['buildings'][k]}\n消耗{rt({k:v for k,v in spent.items() if v},notation)}｜槽位{slots_used(self.state)}/{slot_cap(self.state)}"
 
     def dismantle(self, args):
         if not args:
             return "格式：##planet dismantle (d) <建筑> [数量]"
+        notation = self.state.get("notation","standard")
         k = BA.get(args[0].lower())
         if not k:
             return "⚠ 未知建筑"
@@ -903,7 +928,7 @@ class Game:
                 ret = v * 0.5
                 self.state["resources"][r] = cl(self.state["resources"][r] + ret)
                 refunds[r] += ret
-        return f"♻️ 拆除{B[k]['name']}×{amt}｜返还50%{rt({k:v for k,v in refunds.items() if v})}｜槽位{slots_used(self.state)}/{slot_cap(self.state)}"
+        return f"♻️ 拆除{B[k]['name']}×{amt}｜返还50%{rt({k:v for k,v in refunds.items() if v},notation)}｜槽位{slots_used(self.state)}/{slot_cap(self.state)}"
 
     def orbit(self, args):
         if not args:
@@ -920,8 +945,9 @@ class Game:
 
     def expand(self):
         cost = expand_cost(self.state)
+        notation = self.state.get("notation","standard")
         if not can_afford(self.state, cost):
-            return f"⚠ 资源不足｜需要{rt(cost)}"
+            return f"⚠ 资源不足｜需要{rt(cost,notation)}"
         spend(self.state, cost)
         self.state["expansions"] += 1
         return f"🧱 扩建完成｜+12槽｜上限{slot_cap(self.state)}｜消耗{rt(cost)}"
@@ -929,7 +955,8 @@ class Game:
     def challenge(self, args):
         reached = stage_idx(self.state)
         claimed = set(self.state.get("challenge_claimed", []))
-        want_claim = bool(args and args[0].lower() in ("claim", "领取", "领", "confirm", "确认"))
+        notation = self.state.get("notation","standard")
+        want_claim = bool(args and args[0].lower() in ("claim", "领取", "领", "confirm", "确认","cl"))
         if want_claim:
             newly = []
             reward = {k: 0 for k in RM}
@@ -947,7 +974,7 @@ class Game:
             self.state["challenge_claimed"] = sorted(claimed)
             if not newly:
                 return "⚠ 无可领取挑战"
-            return f"🏁 领取：{' / '.join(SC[i]['name'] for i in newly)}\n奖励{rt({k:v for k,v in reward.items() if v})}\n全产出×{1+0.03*len(claimed):.2f}"
+            return f"🏁 领取：{' / '.join(SC[i]['name'] for i in newly)}\n奖励{rt({k:v for k,v in reward.items() if v},notation)}\n全产出×{1+0.03*len(claimed):.2f}"
         lines = [f"🏁 挑战｜当前{PS[reached][1]}{PS[reached][0]}", "非硬门槛，完成+3%全产出", ""]
         for idx in range(reached + 1):
             info = SC[idx]
@@ -958,7 +985,7 @@ class Game:
                 status = "🎁可领取"
             else:
                 status = "⏳进行中"
-            lines.append(f"{PS[idx][1]}{info['name']}｜{status}\n  目标：{info['goal']}\n  当前：{detail}\n  奖励{rt(info['reward'])} +3%")
+            lines.append(f"{PS[idx][1]}{info['name']}｜{status}\n  目标：{info['goal']}\n  当前：{detail}\n  奖励{rt(info['reward'],notation)} +3%")
         lines.append("领取：##planet challenge claim")
         return "\n".join(lines)
 
@@ -994,6 +1021,7 @@ class Game:
     def synth(self, args):
         known = set(self.state.get("known_recipes", []))
         crafted = set(self.state.get("crafted_recipes", []))
+        notation = self.state.get("notation","standard")
         if len(args) < 2:
             lines = [f"🧪 合成器｜发现{len(known)}/{len(SR)}｜本星制造{len(crafted)}", "输入：##planet synth (sy) <资源A> <资源B>", "错误不扣资源"]
             if known:
@@ -1002,7 +1030,7 @@ class Game:
                     if k not in known:
                         continue
                     fst, snd = recipe["pair"]
-                    lines.append(f"• {recipe['name']}｜{RM[fst][1]}+{RM[snd][1]}｜{rt(recipe['cost'])}｜{recipe['effect']}｜{'✅已造' if k in crafted else '可造'}")
+                    lines.append(f"• {recipe['name']}｜{RM[fst][1]}+{RM[snd][1]}｜{rt(recipe['cost'],notation)}｜{recipe['effect']}｜{'✅已造' if k in crafted else '可造'}")
             else:
                 lines.append("暂无配方，试试 ##planet scan (sc)")
             if len(SR) - len(known):
@@ -1029,17 +1057,18 @@ class Game:
             return f"🧪 {recipe['name']}｜本星已造过"
         if not can_afford(self.state, recipe["cost"]):
             prefix = "✨ 配方发现！" if first_dis else "🧪 已知配方"
-            return f"{prefix}｜{recipe['name']}\n组合{RM[f][1]}+{RM[snd][1]}\n需要{rt(recipe['cost'])}\n效果{recipe['effect']}"
+            return f"{prefix}｜{recipe['name']}\n组合{RM[f][1]}+{RM[snd][1]}\n需要{rt(recipe['cost'],notation)}\n效果{recipe['effect']}"
         spend(self.state, recipe["cost"])
         crafted.add(rk)
         self.state["crafted_recipes"] = [k for k in SR if k in crafted]
-        return f"{'✨发现并' if first_dis else '🧪'}合成{recipe['name']}\n消耗{rt(recipe['cost'])}\n效果{recipe['effect']}"
+        return f"{'✨发现并' if first_dis else '🧪'}合成{recipe['name']}\n消耗{rt(recipe['cost'],notation)}\n效果{recipe['effect']}"
 
     def crank(self, args):
         s = self.state
         now = self.now
         last = s.get("last_crank", 0)
         cd = get_crank_cooldown(s)
+        notation = self.state.get("notation","standard")
         if now - last < cd:
             remaining = int(cd - (now - last))
             return f"⏳ 手摇杆冷却中｜剩余 {remaining} 秒"
@@ -1054,9 +1083,9 @@ class Game:
         s["crank_count"] = s.get("crank_count", 0) + 1
         s["crank_time_bonus"] = s.get("crank_time_bonus", 0) + duration
         
-        reward_text = " ".join([f"+{fm(amt)}{RM[k][0]}" for k, amt in gains.items() if amt > 0])
+        reward_text = " ".join([f"+{fm(amt,notation)}{RM[k][0]}" for k, amt in gains.items() if amt > 0])
         new_ms = self._check_milestones()
-        msg = f"🔄 手摇完成！加速{fm(duration/60)}分钟\n{reward_text}\n⏱️ 累计加速计时：{fs(s['crank_time_bonus'])}"
+        msg = f"🔄 手摇完成！加速{fm(duration/60,notation)}分钟\n{reward_text}\n⏱️ 累计加速计时：{fs(s['crank_time_bonus'])}"
         if new_ms:
             msg += "\n🎉 新里程碑：" + " / ".join([ms["name"] for ms in new_ms])
         return msg
@@ -1087,13 +1116,14 @@ class Game:
     def rank(self):
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
         users = list(self.gstate.get("users", {}).items())
+        notation = self.state.get("notation","standard")
         users.sort(key=lambda kv: (kv[1].get("cores_total", 0), kv[1].get("lifetime_civilization", 0), kv[1].get("launches", 0)), reverse=True)
         lines = ["🏆 全服榜"]
         if not users:
             return "\n".join(lines + ["暂无数据"])
         for i, (uid, item) in enumerate(users[:20], 1):
             mark = " ←你" if uid == self.uid else ""
-            lines.append(f"{i}. {item.get('nickname','玩家')}｜星核{item.get('cores_total',0)}｜启航{item.get('launches',0)}｜文明{fm(item.get('lifetime_civilization',0))}{mark}")
+            lines.append(f"{i}. {item.get('nickname','玩家')}｜星核{item.get('cores_total',0)}｜启航{item.get('launches',0)}｜文明{fm(item.get('lifetime_civilization',0),notation)}{mark}")
         return "\n".join(lines)
 
     def _secret_ready(self, k):
@@ -1118,6 +1148,7 @@ class Game:
         notices = []
         stg = stage_idx(s)
         seen = s.get("stage_seen", 0)
+        notation = self.state.get("notation","standard")
         if stg > seen:
             crossed = stg - seen
             s["stage_seen"] = stg
@@ -1132,7 +1163,7 @@ class Game:
             disc.add(k)
             for r, a in info.get("reward", {}).items():
                 s["resources"][r] = cl(s["resources"][r] + a)
-            notices.append(f"🔭【{info['name']}】{info['text']}\n余波{rt(info.get('reward', {}))}")
+            notices.append(f"🔭【{info['name']}】{info['text']}\n余波{rt(info.get('reward', {}),notation)}")
         s["discoveries"] = [k for k in SE if k in disc]
         new_ms = self._check_milestones()
         if new_ms:
@@ -1165,11 +1196,12 @@ class Game:
 
     def launch(self, args):
         gain = launch_gain(self.state)
+        notation = self.state.get("notation","standard")
         confirm = bool(args and args[0].lower() in ("confirm", "确认", "yes", "y"))
         if not confirm:
             if gain <= 0:
                 civ = self.state["cycle_generated"]["civilization"]
-                return f"🚀 未达条件｜文明{fm(civ)}/1.000K"
+                return f"🚀 未达条件｜文明{fm(civ,notation)}/{fm(1000,notation)}"
             return f"🚀 启航｜可获得{gain}星核\n清空：资源/累计/建筑/扩建/轨道/合成/挑战\n保留：星核/科技/配方/事件/历史/启航次数/里程碑/光环\n确认：##planet launch confirm"
         if gain <= 0:
             return "⚠ 文明不足1000"
@@ -1202,10 +1234,11 @@ class Game:
         new["taps"] = old["taps"]
         new["crank_count"] = old.get("crank_count", 0)
         new["last_tick"] = self.now
+        notation = self.state.get("notation","standard")
         self.state = new
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
         time_str = fs(total_elapsed)
-        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'])}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"
+        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'],notation)}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"
 
     def milestone(self, args):
         s = self.state
@@ -1292,7 +1325,18 @@ class Game:
             return f"⚠ 导入失败：JSON解析错误 - {str(e)}"
         except Exception as e:
             return f"⚠ 导入失败：{str(e)}"
-
+    
+    def change_notation(self, args):
+        k="、".join([f"{a}/{AVAILABLE_NOTATIONS[a]}" for a in AVAILABLE_NOTATIONS])
+        alias={"标准":"standard","标准计数法":"standard","标准记数法":"standard","std":"standard","d":"standard","1":"standard",\
+               "科学":"scientific","科学计数法":"scientific","科学记数法":"scientific","sci":"scientific","s":"scientific","2":"scientific"}
+        c=alias.get(args[0],"standard")
+        if c not in AVAILABLE_NOTATIONS:
+            return f"不存在计数法：{c}\n可用计数法：{k}"
+        if not self.state.get("notation"):
+            self.state["notation"] = "standard"
+        self.state["notation"] = c
+        return f"已将计数法切换为{AVAILABLE_NOTATIONS[c]}"
     def run(self, cmd):
         cmd = strip_prefix(cmd)
         c = ""
@@ -1359,9 +1403,11 @@ class Game:
                 msg = self.export()
             elif c in ("import", "导入", "im"):
                 msg = self._import(args)
+            elif c in ("notation", "计数法", "记数法", "nt"):
+                msg = self.change_notation(args)
             else:
                 msg = f"⚠ 未知命令：{parts[0]}\n##planet help 查看目录"
-        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im"}
+        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im", "notation", "计数法", "记数法", "nt"}
         if c and c not in quiet:
             msg = self._post_action(msg)
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
