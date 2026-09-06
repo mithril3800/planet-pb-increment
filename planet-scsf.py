@@ -87,6 +87,10 @@ MILESTONES = [
     {"id": "launch_1", "name": "🚀 启航新手", "reward": {"global_prod": 0.02}, "desc": "累计启航 1 次"},
     {"id": "launch_5", "name": "🚀 启航老手", "reward": {"global_prod": 0.05}, "desc": "累计启航 5 次"},
     {"id": "launch_10", "name": "🚀 启航大师", "reward": {"global_prod": 0.10}, "desc": "累计启航 10 次"},
+    {"id": "speedrun_10h", "name": "🚀 慢速启航", "reward": {"global_prod": 0.01}, "desc": "在10h之内(含手摇时间)启航"},
+    {"id": "speedrun_5h", "name": "🚀 中速启航", "reward": {"global_prod": 0.04, "cores": 1}, "desc": "在5h之内(含手摇时间)启航"},
+    {"id": "speedrun_3h", "name": "🚀 快速启航", "reward": {"global_prod": 0.12, "cores": 2}, "desc": "在3h之内(含手摇时间)启航"},
+    {"id": "speedrun_1.5h", "name": "🚀 极速启航", "reward": {"global_prod": 0.25, "cores": 5, "stage_unlock":"simulation"}, "desc": "在1.5h之内(含手摇时间)启航"},
     {"id": "civ_10k", "name": "🏛️ 文明先驱", "reward": {"cores": 1}, "desc": "历史文明总产出 ≥ 1万"},
     {"id": "civ_100k", "name": "🏛️ 文明领袖", "reward": {"cores": 3}, "desc": "历史文明总产出 ≥ 10万"},
     {"id": "civ_1m", "name": "🏛️ 文明传奇", "reward": {"cores": 5}, "desc": "历史文明总产出 ≥ 100万"},
@@ -315,6 +319,7 @@ def migrate_state(s, now=None):
     if orb:
         base["orbit"] = orb
     base["notation"] = s.get("notation","standard")
+    base["best_elapsed"] = s.get("best_elapsed",MAX_NUM)
     base["schema"] = STATE_SCHEMA
     return base
 
@@ -802,6 +807,27 @@ class Game:
             s["milestones_claimed"] = list(claimed)
             return new
         return []
+    def grant_milestone(self, msid):
+        s = self.state
+        claimed = set(s.get("milestones_claimed", []))
+        new = []
+        for ms in MILESTONES:
+            if ms in claimed:
+                continue
+            if not (ms in claimed) and ms["id"] == msid:
+                claimed.add(ms["id"])
+                new.append(ms)
+                for k, v in ms["reward"].items():
+                    if k == "global_prod":
+                        pass
+                    elif k == "cores":
+                        s["cores"] = cl(s["cores"] + v)
+                    elif k == "crank_cooldown":
+                        pass       
+        if new:
+            s["milestones_claimed"] = list(claimed)
+            return new
+        return []         
 
     def status(self):
         s = self.state
@@ -1225,7 +1251,8 @@ class Game:
         best = old.get("speedrun_record", 0)
         if best == 0 or total_elapsed < best:
             old["speedrun_record"] = total_elapsed
-        
+        new_ms=[]
+        text_milestones=""
         new = fresh_state(self.now)
         new["techs"] = dict(old["techs"])
         new["known_recipes"] = list(old.get("known_recipes", []))
@@ -1242,11 +1269,23 @@ class Game:
         new["taps"] = old["taps"]
         new["crank_count"] = old.get("crank_count", 0)
         new["last_tick"] = self.now
+        new["best_elapsed"] = min(self.state.get("best_elapsed",MAX_NUM),total_elapsed)
+        if new["best_elapsed"] < 36000:
+            new_ms+=self.grant_milestone("speedrun_10h")
+        if new["best_elapsed"] < 18000:
+            new_ms+=self.grant_milestone("speedrun_5h")
+        if new["best_elapsed"] < 10800:
+            new_ms+=self.grant_milestone("speedrun_3h")
+        if new["best_elapsed"] < 5400:
+            new_ms+=self.grant_milestone("speedrun_1.5h")
+        if new_ms:
+            names = " / ".join([ms["name"] for ms in new_ms])
+            text_milestones=f"🎉 新里程碑达成：{names}！"
         notation = self.state.get("notation","standard")
         self.state = new
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
         time_str = fs(total_elapsed)
-        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'],notation)}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"
+        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'],notation)}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"+("\n"*bool(text_milestones)+text_milestones)
 
     def milestone(self, args):
         s = self.state
