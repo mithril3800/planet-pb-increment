@@ -642,12 +642,20 @@ cr = crank      (手摇)
 m  = milestone  (里程碑)
 au = aura       (光环)
 sp = speedrun   (竞速榜)
+ex = export     (导出)
+im = import     (导入)
+nt = notation   (计数法)
 
 【随时查看状态】
 ##planet state (或 ##planet st 或 ##planet s)
 
 【获取帮助】
-##planet help (或 ##planet h)"""
+##planet help (或 ##planet h)
+
+【修改计数法】
+##planet nt (sci/std)
+
+"""
 
 def tutorial_text():
     return """🚀 新手路线：##planet tap 2 → ##planet build 日照阵列 → 等能/s到2.5 → ##planet challenge claim → ##planet build 钻机 → ##planet orbit 地质 → 矿物够造融冰 → ##planet orbit 海洋 → 水够造大气 → ##planet orbit 气候 → 大气够造生态 → ##planet orbit 生态 → 生物够造城市 → ##planet orbit 文明 → 文明到1000 → ##planet launch → confirm"""
@@ -729,7 +737,7 @@ for c, item in HC.items():
 HELP_INDEX = """PLANET GENESIS｜帮助目录 (支持缩写)
 分页：##planet help 1-7
 1目标/格式 2资源/阶段 3建筑 4轨道/离线 5启航/科技 6排行/资料 7手摇/里程碑/光环
-命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) | reset(无缩写) | play(新手引导)"""
+命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) nt(计数法) | reset(无缩写) | play(新手引导)"""
 
 def help_page(page=None):
     t = " ".join(str(page or "").strip().lower().split())
