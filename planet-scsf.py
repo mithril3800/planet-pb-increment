@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PLANET GENESIS QQ/PB｜作者：剩菜｜v1.4.4｜修复缩写冲突｜无随机/无概率"""
+"""PLANET GENESIS QQ/PB｜作者：剩菜｜v1.4.8｜竞速榜计时修复+致谢前辈｜无随机/无概率"""
 import ast
 import base64
 import difflib
@@ -10,7 +10,7 @@ import re
 import time
 import zlib
 
-APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.4.4"
+APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.4.8"
 STATE_SCHEMA, GLOBAL_SCHEMA, SAVE_PREFIX = 4, 2, "json:"
 MAX_SAVE, MAX_DECOMP, MAX_PROTOCOL, MAX_CMD, MAX_GLOBAL_USERS, MAX_BUILD, MAX_NUM = 8 * 1024 * 1024, 8 * 1024 * 1024, 20 * 1024 * 1024, 4096, 5000, 1000, 1e300
 BASE_OFFLINE, OFFLINE_PER_TECH, MAX_OFFLINE = 8, 4, 72
@@ -26,7 +26,7 @@ B = {
     "bio": {"name": "生态穹顶", "icon": "🌿", "slots": 6, "bc": {"water": 80, "air": 60}, "scale": 1.21, "rate": {"biomass": 0.018}, "desc": "让生命进入稳定循环。每座 +0.018 生物量/秒。"},
     "city": {"name": "城市节点", "icon": "🏙️", "slots": 8, "bc": {"energy": 100, "biomass": 80}, "scale": 1.22, "rate": {"civilization": 0.004}, "desc": "把生态转化为文明。每座 +0.004 文明/秒。"},
     "ring": {"name": "轨道环", "icon": "🛰️", "slots": 12, "bc": {"mineral": 200, "air": 150, "civilization": 50}, "scale": 1.23, "rate": {}, "desc": "每座使全部被动产出 ×1.12。"},
-    "transmission": {"name": "快速传动装置", "icon": "⚙️", "slots": 2, "bc": {"mineral": 50, "energy": 30}, "scale": 1.25, "rate": {}, "desc": "每座使手摇加速 +5秒，冷却 -0.1秒（最低3秒）。"},
+    "transmission": {"name": "快速传动装置", "icon": "⚙️", "slots": 2, "bc": {"mineral": 50, "energy": 30}, "scale": 1.25, "rate": {}, "desc": "每座使手摇加速 +0.2分钟（12秒），冷却 -0.15秒（最低3秒）。"},
 }
 BA = {"solar": "solar", "日照阵列": "solar", "日照": "solar", "太阳能": "solar", "mine": "mine", "地壳钻机": "mine", "钻机": "mine", "矿机": "mine", "melt": "melt", "融冰塔": "melt", "融冰": "melt", "冰塔": "melt", "atmo": "atmo", "大气工厂": "atmo", "大气": "atmo", "bio": "bio", "生态穹顶": "bio", "生态": "bio", "穹顶": "bio", "city": "city", "城市节点": "city", "城市": "city", "ring": "ring", "轨道环": "ring", "环": "ring", "中继环": "ring", "transmission": "transmission", "快速传动装置": "transmission", "传动": "transmission", "传动装置": "transmission", "变速": "transmission"}
 
@@ -141,7 +141,7 @@ def fm(v):
         if v >= 10:
             return f"{v:,.2f}"
         return f"{v:,.3f}"
-    for t, s in [(1e30, "No"), (1e27, "Oc"), (1e24, "Sp"), (1e21, "Sx"), (1e18, "Qi"), (1e15, "Qa"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
+    for t, s in [(1e30, "Qn"), (1e27, "Oc"), (1e24, "Sp"), (1e21, "Sx"), (1e18, "Qi"), (1e15, "Qa"), (1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")]:
         if v >= t:
             return f"{v/t:.3f}{s}"
     return f"{v:,.0f}"
@@ -159,36 +159,26 @@ def fs(s):
 def rt(c):
     return " + ".join([f"{fm(a)}{RM[k][0]}{RM[k][1]}" for k, a in c.items() if a]) or "0"
 
-def cryp(r,st1="0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+/=",st2="h4P0mUK2iZt6Q1pusWVJxvf5XYqA9nFy=3jREH+OGDBNzcdelS7wTgM/ak8oCIbLr",inv=0):
-    if inv:
-        st1,st2=st2,st1
-    res=""
-    for _ in r:
-        res+=st2[st1.find(_)]
-    return res
-def gzip_text(text):
-    data = text.encode('utf-8')
-    cdata = gzip.compress(data)
-    bdata = base64.encodebytes(cdata)
-    btext = bdata.decode('utf-8')
-    return btext
+def _b64_encode(data):
+    return base64.b64encode(data).decode('ascii')
 
-def ungzip_text(btext):
-    bdata = btext.encode('utf-8')
-    cdata = base64.decodebytes(bdata)
-    data = gzip.decompress(cdata)
-    text = data.decode('utf-8')
-    return text
-temp=None
-def readdict(x):
-    if x:
-        exec("""
-global temp
-temp=%s"""%x)
-        return temp
-    else:
+def _b64_decode(text):
+    try:
+        return base64.b64decode(text.encode('ascii'))
+    except:
         return None
 
+def gzip_text(text):
+    data = text.encode('utf-8')
+    cdata = gzip.compress(data, compresslevel=6)
+    return _b64_encode(cdata)
+
+def ungzip_text(btext):
+    cdata = _b64_decode(btext)
+    if cdata is None:
+        raise ValueError("Base64解码失败")
+    data = gzip.decompress(cdata)
+    return data.decode('utf-8')
 
 def enc(v):
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
@@ -198,7 +188,6 @@ def dec(v):
         raise ValueError("save must be text")
     if v.startswith("gz:"):
         try:
-            import base64, gzip, zlib
             encoded = v[3:]
             compressed = base64.b64decode(encoded.encode("ascii"), validate=True)
             inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
@@ -503,16 +492,16 @@ def planet_code(s):
     return f"P-{s['launches']+1:03d}"
 
 def get_crank_duration(s):
-    """计算单次手摇加速时长（秒），基础2分钟"""
-    base = 120  # 2分钟
+    """计算单次手摇加速时长（秒），基础2分钟，每座传动装置+12秒（0.2分钟）"""
+    base = 120
     trans = s["buildings"]["transmission"]
-    return base + trans * 5  # 每座传动装置+5秒
+    return base + trans * 12
 
 def get_crank_cooldown(s):
-    """计算手摇冷却（秒）"""
+    """计算手摇冷却（秒），基础10秒，每座传动装置-0.15秒"""
     base = 10
     trans = s["buildings"]["transmission"]
-    cd = base - trans * 0.1
+    cd = base - trans * 0.15
     for mid in s.get("milestones_claimed", []):
         for ms in MILESTONES:
             if ms["id"] == mid and "crank_cooldown" in ms["reward"]:
@@ -568,13 +557,21 @@ def formula_text():
 【8 离线】默认8小时，休眠每级+4小时，最高72小时。
 【9 挑战】每领取1个挑战，全产出×(1+0.03×已领数)。启航重置。
 【10 合成】单资源×1.15，全资源×1.08。每行星最多造1次，配方永久保留。
-【11 手摇】基础加速2分钟，冷却10秒。传动装置+5秒/座，-0.1秒/座冷却。里程碑额外减冷却。最低3秒。手摇会加速游戏内计时，影响竞速榜！
+【11 手摇】基础加速2分钟，冷却10秒。传动装置+0.2分钟（12秒）/座，-0.15秒/座冷却。最低3秒。手摇加速游戏内计时，影响竞速榜！
 【12 里程碑】永久加成，跨启航保留。查看：##planet milestone (m)
 【13 光环】星核购买，永久生效。查看：##planet aura (au)
 无抽奖无概率，一切确定。"""
 
 def version_text():
-    return f"{APP_NAME} v{APP_VERSION}\n维护：剩菜\nschema {STATE_SCHEMA}｜全局 {GLOBAL_SCHEMA}\n无抽奖/无随机/纯确定增量"
+    return f"""{APP_NAME} v{APP_VERSION}
+维护：剩菜
+schema {STATE_SCHEMA}｜全局 {GLOBAL_SCHEMA}
+无抽奖/无随机/纯确定增量
+
+🙏 特别感谢：
+• @日月终风 前辈 - 提供了本游戏的基础框架与核心玩法设计
+• @秘银（Mithril） - 对整个游戏进行的局外操作优化与修改
+• @三月七（十星三月七） - 早期版本玩家测试与反馈"""
 
 def play_text():
     return """🎮 PLANET GENESIS｜新手快速上手
@@ -605,7 +602,7 @@ def play_text():
 文明累计达到1000后：
 输入：##planet launch (或 ##planet l) 查看收益
 确认启航：##planet launch confirm
-你的启航用时（受手摇加速影响）将记录到竞速榜！
+你的启航用时（实际时间+手摇加速时间）将记录到竞速榜！
 
 【常用缩写】
 st = state      (状态)    s 也支持
@@ -662,7 +659,7 @@ HP = (
     """【2/7｜资源与阶段】链：☀️恒星能→🪨矿物→💧水→🌫️大气→🌱生物量→🏙️文明
 阶段：裸岩星→觉醒地核(矿物100)→原始海洋(水100)→稠密大气(大气100)→生命摇篮(生物100)→城市行星(文明100)→星际母星(文明1000)
 查看：##planet planet (pl)""",
-    """【3/7｜建筑】日照阵列(1槽+1能/s) 钻机(2槽+0.35矿/s) 融冰塔(3槽+0.12水/s) 大气工厂(4槽+0.05大气/s) 生态穹顶(6槽+0.018生物/s) 城市节点(8槽+0.004文明/s) 轨道环(12槽全产×1.12) 传动装置(2槽手摇强化)
+    """【3/7｜建筑】日照阵列(1槽+1能/s) 钻机(2槽+0.35矿/s) 融冰塔(3槽+0.12水/s) 大气工厂(4槽+0.05大气/s) 生态穹顶(6槽+0.018生物/s) 城市节点(8槽+0.004文明/s) 轨道环(12槽全产×1.12) 传动装置(2槽手摇强化：+0.2分钟/座，-0.15秒冷却/座)
 购买：##planet build (b) <建筑> [数量|max]  拆除：##planet dismantle (d)
 扩建：##planet expand (e) (+12槽)""",
     """【4/7｜轨道/离线】##planet orbit (o) 恒星|地质|海洋|气候|生态|文明|平衡
@@ -713,7 +710,7 @@ for c, item in HC.items():
 HELP_INDEX = """PLANET GENESIS｜帮助目录 (支持缩写)
 分页：##planet help 1-7
 1目标/格式 2资源/阶段 3建筑 4轨道/离线 5启航/科技 6排行/资料 7手摇/里程碑/光环
-命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) ex(导出) im(导入) | reset(无缩写) | play(新手引导)"""
+命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) | reset(无缩写) | play(新手引导)"""
 
 def help_page(page=None):
     t = " ".join(str(page or "").strip().lower().split())
@@ -852,7 +849,7 @@ class Game:
             if k == "ring":
                 prod = ["每座全产×1.12"]
             if k == "transmission":
-                prod = [f"加速+5s/座 冷却-0.1s/座"]
+                prod = [f"加速+0.2分钟/座 冷却-0.15秒/座"]
             lines.append(f"{info['icon']}{info['name']}×{s['buildings'][k]}｜占{info['slots']}槽｜下一座{rt(cost)}｜{';'.join(prod)}")
         return "\n".join(lines)
 
@@ -1065,7 +1062,6 @@ class Game:
         return msg
 
     def speedrun(self, args):
-        """查看竞速榜，作者可清空"""
         if args and args[0].lower() == "clear":
             if self.uid == "3771400817":
                 self.gstate["speedrun"] = {}
@@ -1075,7 +1071,7 @@ class Game:
         
         sr = self.gstate.get("speedrun", {})
         if not sr:
-            return "🏃 竞速榜｜暂无记录\n完成首次启航后自动上榜！（手摇可加速计时）"
+            return "🏃 竞速榜｜暂无记录\n完成首次启航后自动上榜！（手摇加速计时）"
         items = list(sr.items())
         items.sort(key=lambda x: x[1])
         lines = ["🏃 竞速榜｜最快启航记录（手摇加速计时）"]
@@ -1178,13 +1174,18 @@ class Game:
         if gain <= 0:
             return "⚠ 文明不足1000"
         old = self.state
+        
+        # ===== 修复：竞速榜计时改为加法（实际时间 + 手摇加速时间）=====
         actual_elapsed = old.get("last_tick", self.now) - old.get("created_at", self.now)
         crank_bonus = old.get("crank_time_bonus", 0)
-        total_elapsed = max(0, actual_elapsed - crank_bonus)
-        if total_elapsed > 0:
-            best = old.get("speedrun_record", 0)
-            if best == 0 or total_elapsed < best:
-                old["speedrun_record"] = total_elapsed
+        # 总时间 = 实际游玩时间 + 手摇跳过的时间（加法）
+        total_elapsed = max(1, actual_elapsed + crank_bonus)  # 至少1秒
+        
+        # 更新竞速榜（用时越短越好）
+        best = old.get("speedrun_record", 0)
+        if best == 0 or total_elapsed < best:
+            old["speedrun_record"] = total_elapsed
+        
         new = fresh_state(self.now)
         new["techs"] = dict(old["techs"])
         new["known_recipes"] = list(old.get("known_recipes", []))
@@ -1203,8 +1204,8 @@ class Game:
         new["last_tick"] = self.now
         self.state = new
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
-        time_str = fs(total_elapsed) if total_elapsed > 0 else "无法计算"
-        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'])}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（手摇加速已计入）"
+        time_str = fs(total_elapsed)
+        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'])}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"
 
     def milestone(self, args):
         s = self.state
@@ -1269,13 +1270,28 @@ class Game:
         return "🧹 已清档｜重新开始"
     
     def export(self):
-        return "导出的存档如下:\n"+cryp(gzip_text(str(self.state)))
-    def _import(self,args):
         try:
-            self.state = readdict(ungzip_text(cryp(args[0],inv=1)))
-            return "导入存档成功!\n"+self.status()
+            data = enc(self.state)
+            compressed = gzip_text(data)
+            return f"📦 导出存档成功！\n请复制以下内容保存：\n{compressed}"
         except Exception as e:
-            return f"导入存档失败!\n出错信息:{e}"
+            return f"⚠ 导出失败：{str(e)}"
+
+    def _import(self, args):
+        if not args:
+            return "⚠ 用法：##planet import <压缩存档字符串>"
+        try:
+            raw = args[0]
+            decoded = ungzip_text(raw)
+            new_state = json.loads(decoded)
+            if not isinstance(new_state, dict):
+                return "⚠ 导入失败：数据格式错误"
+            self.state = migrate_state(new_state, self.now)
+            return f"✅ 导入存档成功！\n{self.status()}"
+        except json.JSONDecodeError as e:
+            return f"⚠ 导入失败：JSON解析错误 - {str(e)}"
+        except Exception as e:
+            return f"⚠ 导入失败：{str(e)}"
 
     def run(self, cmd):
         cmd = strip_prefix(cmd)
@@ -1339,13 +1355,13 @@ class Game:
                 msg = version_text()
             elif c in ("reset", "清档", "清除", "clear"):
                 msg = self.reset(args)
-            elif c in ("export","导出","ex"):
+            elif c in ("export", "导出", "ex"):
                 msg = self.export()
-            elif c in ("import","导入","im"):
+            elif c in ("import", "导入", "im"):
                 msg = self._import(args)
             else:
                 msg = f"⚠ 未知命令：{parts[0]}\n##planet help 查看目录"
-        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "play", "新手", "开始"}
+        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im"}
         if c and c not in quiet:
             msg = self._post_action(msg)
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
