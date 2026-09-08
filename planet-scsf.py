@@ -96,6 +96,8 @@ MILESTONES = [
     {"id": "civ_1m", "name": "🏛️ 文明传奇", "reward": {"cores": 5}, "desc": "历史文明总产出 ≥ 100万"},
     {"id": "crank_100", "name": "🔄 手摇达人", "reward": {"crank_cooldown": -0.5}, "desc": "累计手摇 100 次"},
     {"id": "crank_1000", "name": "🔄 手摇狂人", "reward": {"crank_cooldown": -1.0}, "desc": "累计手摇 1000 次"},
+    {"id": "bulk_core_2", "name": "💠 双星系统", "reward": {"global_prod": 0.03, "cores": 1}, "desc": "一次启航获得至少2个星核"},
+    
 ]
 
 AURAS = [
@@ -788,19 +790,20 @@ class Game:
 
     def _check_milestones(self):
         s = self.state
-        claimed = set(s.get("milestones_claimed", []))
+        claimed = list(set(s.get("milestones_claimed", [])))
         new = []
         for ms in MILESTONES:
             if ms["id"] in claimed:
                 continue
             if _check_milestone_cond(s, ms["id"]):
-                claimed.add(ms["id"])
+                claimed.append(ms["id"])
                 new.append(ms)
                 for k, v in ms["reward"].items():
                     if k == "global_prod":
                         pass
                     elif k == "cores":
                         s["cores"] = cl(s["cores"] + v)
+                        s["cores_total"] = cl(s["cores_total"] + v)
                     elif k == "crank_cooldown":
                         pass
         if new:
@@ -809,19 +812,20 @@ class Game:
         return []
     def grant_milestone(self, msid):
         s = self.state
-        claimed = set(s.get("milestones_claimed", []))
+        claimed = list(set(s.get("milestones_claimed", [])))
         new = []
         for ms in MILESTONES:
             if ms in claimed:
                 continue
             if not (ms in claimed) and ms["id"] == msid:
-                claimed.add(ms["id"])
+                claimed.append(ms["id"])
                 new.append(ms)
                 for k, v in ms["reward"].items():
                     if k == "global_prod":
                         pass
                     elif k == "cores":
                         s["cores"] = cl(s["cores"] + v)
+                        s["cores_total"] = cl(s["cores_total"] + v)
                     elif k == "crank_cooldown":
                         pass       
         if new:
@@ -850,7 +854,7 @@ class Game:
             nz = [f"+{fm(self.ogains[k],notation)}{RM[k][0]}" for k in RM if self.ogains[k] > 0]
             lines.append(f"🌙 离线 {fs(self.elapsed)}{suffix}｜" + (" ".join(nz) if nz else "无被动产出"))
         gain = launch_gain(s)
-        lines.append(f"🚀 {'已可启航｜+' + str(gain)+'星核' if gain else '启航进度｜文明 '+fm(s['cycle_generated']['civilization'])+'/1.000K'}")
+        lines.append(f"🚀 {'已可启航｜+' + str(gain)+'星核' if gain else '启航进度｜文明 '+fm(s['cycle_generated']['civilization'],notation)+f'/{fm(1000,notation)}'}")
         if new_ms:
             names = " / ".join([ms["name"] for ms in new_ms])
             lines.append(f"🎉 新里程碑达成：{names}！")
@@ -1121,7 +1125,7 @@ class Game:
         new_ms = self._check_milestones()
         msg = f"🔄 手摇完成！加速{fm(duration/60,notation)}分钟\n{reward_text}\n⏱️ 累计加速计时：{fs(s['crank_time_bonus'])}"
         if new_ms:
-            msg += "\n🎉 新里程碑：" + " / ".join([ms["name"] for ms in new_ms])
+            msg += "\n🎉 新里程碑达成：" + " / ".join([ms["name"] for ms in new_ms])
         return msg
 
     def speedrun(self, args):
@@ -1201,9 +1205,9 @@ class Game:
         s["discoveries"] = [k for k in SE if k in disc]
         new_ms = self._check_milestones()
         if new_ms:
-            notices.append("🎉 新里程碑：" + " / ".join([ms["name"] for ms in new_ms]))
+            notices.append("🎉 新里程碑达成：" + " / ".join([ms["name"] for ms in new_ms]))
         if notices:
-            return msg + "\n\n" + "\n\n".join(notices)
+            return msg + "\n" + "\n".join(notices)
         return msg
 
     def tech(self, args):
@@ -1254,6 +1258,17 @@ class Game:
         new_ms=[]
         text_milestones=""
         new = fresh_state(self.now)
+        best_elapsed = min(self.state.get("best_elapsed",MAX_NUM),total_elapsed)
+        if best_elapsed < 36000:
+            new_ms+=self.grant_milestone("speedrun_10h")
+        if best_elapsed < 18000:
+            new_ms+=self.grant_milestone("speedrun_5h")
+        if best_elapsed < 10800:
+            new_ms+=self.grant_milestone("speedrun_3h")
+        if best_elapsed < 5400:
+            new_ms+=self.grant_milestone("speedrun_1.5h")
+        if gain>1:
+            new_ms+=self.grant_milestone("bulk_core_2")
         new["techs"] = dict(old["techs"])
         new["known_recipes"] = list(old.get("known_recipes", []))
         new["clues_seen"] = list(old.get("clues_seen", []))
@@ -1269,15 +1284,7 @@ class Game:
         new["taps"] = old["taps"]
         new["crank_count"] = old.get("crank_count", 0)
         new["last_tick"] = self.now
-        new["best_elapsed"] = min(self.state.get("best_elapsed",MAX_NUM),total_elapsed)
-        if new["best_elapsed"] < 36000:
-            new_ms+=self.grant_milestone("speedrun_10h")
-        if new["best_elapsed"] < 18000:
-            new_ms+=self.grant_milestone("speedrun_5h")
-        if new["best_elapsed"] < 10800:
-            new_ms+=self.grant_milestone("speedrun_3h")
-        if new["best_elapsed"] < 5400:
-            new_ms+=self.grant_milestone("speedrun_1.5h")
+        new["best_elapsed"] = best_elapsed
         if new_ms:
             names = " / ".join([ms["name"] for ms in new_ms])
             text_milestones=f"🎉 新里程碑达成：{names}！"
@@ -1468,6 +1475,7 @@ def error_packet(msg, ctx=None, now=None):
     return {"content": f"⚠ {msg}\n请通过#pb add添加并由PB运行器调用", "storage": enc(state_data), "global": enc(gs)}
 
 def run_pb_session(ctx, cmd="", now_fn=None):
+    #return Game(ctx, now_fn=now_fn).run(cmd) #debug
     try:
         return Game(ctx, now_fn=now_fn).run(cmd)
     except Exception as e:
