@@ -1335,7 +1335,7 @@ class Game:
             return "⚠ 请指定光环名称，如：##planet aura buy 地核光环"
         target = None
         for aura in AURAS:
-            if aura["name"] == name or aura["id"] == name or aura["id"] in name:
+            if aura["name"] == name or aura["id"] == name or aura["id"] in name or name in aura["name"]:
                 target = aura
                 break
         if not target:
