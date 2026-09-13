@@ -375,6 +375,8 @@ def aura_resource_mult(s, res):
                 eff = aura.get("effect", {})
                 if res in eff:
                     mult *= eff[res]
+                if "all" in eff:
+                    mult *= eff["all"]
     return mult
 
 def prod_rates(s):
@@ -1206,7 +1208,7 @@ class Game:
         new_ms = self._check_milestones()
         if new_ms:
             notices.append("🎉 新里程碑达成：" + " / ".join([ms["name"] for ms in new_ms]))
-        s["milestones_claimed"] = list(set(s.get("milestones_claimed", [])))
+            s = list(set(s.get("milestones_claimed", [])))
         if notices:
             return msg + "\n" + "\n".join(notices)
         return msg
