@@ -97,7 +97,8 @@ MILESTONES = [
     {"id": "crank_100", "name": "🔄 手摇达人", "reward": {"crank_cooldown": -0.5}, "desc": "累计手摇 100 次"},
     {"id": "crank_1000", "name": "🔄 手摇狂人", "reward": {"crank_cooldown": -1.0}, "desc": "累计手摇 1000 次"},
     {"id": "bulk_core_2", "name": "💠 双星系统", "reward": {"global_prod": 0.03, "cores": 1}, "desc": "一次启航获得至少2个星核"},
-    
+    {"id": "bulk_core_5", "name": "💠 五星好评", "reward": {"global_prod": 0.07, "cores": 2}, "desc": "一次启航获得至少5个星核"},
+    {"id": "bulk_core_10", "name": "💠 后羿射日", "reward": {"global_prod": 0.15, "cores": 3}, "desc": "一次启航获得至少10个星核"},
 ]
 
 AURAS = [
@@ -374,8 +375,6 @@ def aura_resource_mult(s, res):
                 eff = aura.get("effect", {})
                 if res in eff:
                     mult *= eff[res]
-                if "all" in eff:
-                    mult *= eff["all"]
     return mult
 
 def prod_rates(s):
@@ -815,10 +814,11 @@ class Game:
         claimed = list(set(s.get("milestones_claimed", [])))
         new = []
         for ms in MILESTONES:
-            if ms in claimed:
+            if ms["id"] in claimed:
                 continue
-            if not (ms in claimed) and ms["id"] == msid:
+            if not (ms["id"] in claimed) and ms["id"] == msid:
                 claimed.append(ms["id"])
+                claimed = list(set(s.get("milestones_claimed", [])))
                 new.append(ms)
                 for k, v in ms["reward"].items():
                     if k == "global_prod":
@@ -1206,6 +1206,7 @@ class Game:
         new_ms = self._check_milestones()
         if new_ms:
             notices.append("🎉 新里程碑达成：" + " / ".join([ms["name"] for ms in new_ms]))
+        s["milestones_claimed"] = list(set(s.get("milestones_claimed", [])))
         if notices:
             return msg + "\n" + "\n".join(notices)
         return msg
@@ -1267,8 +1268,12 @@ class Game:
             new_ms+=self.grant_milestone("speedrun_3h")
         if best_elapsed < 5400:
             new_ms+=self.grant_milestone("speedrun_1.5h")
-        if gain>1:
+        if gain>1 and "bulk_core_2" not in list(old.get("milestones_claimed", [])):
             new_ms+=self.grant_milestone("bulk_core_2")
+        if gain>4 and "bulk_core_5" not in list(old.get("milestones_claimed", [])):
+            new_ms+=self.grant_milestone("bulk_core_5")
+        if gain>9 and "bulk_core_10" not in list(old.get("milestones_claimed", [])):
+            new_ms+=self.grant_milestone("bulk_core_10")
         new["techs"] = dict(old["techs"])
         new["known_recipes"] = list(old.get("known_recipes", []))
         new["clues_seen"] = list(old.get("clues_seen", []))
@@ -1279,12 +1284,14 @@ class Game:
         new["cores_total"] = old["cores_total"] + gain
         new["cores"] = old["cores"] + gain
         new["launches"] = old["launches"] + 1
-        new["created_at"] = old["created_at"]
+        new["created_at"] = self.now
         new["lifetime_generated"] = dict(old["lifetime_generated"])
         new["taps"] = old["taps"]
         new["crank_count"] = old.get("crank_count", 0)
         new["last_tick"] = self.now
         new["best_elapsed"] = best_elapsed
+        new["crank_time_bonus"] = 0
+        new["speedrun_record"] = old.get("speedrun_record", 0)
         if new_ms:
             names = " / ".join([ms["name"] for ms in new_ms])
             text_milestones=f"🎉 新里程碑达成：{names}！"
