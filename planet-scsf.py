@@ -10,10 +10,23 @@ import re
 import time
 import zlib
 
-APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.4.8"
-STATE_SCHEMA, GLOBAL_SCHEMA, SAVE_PREFIX = 4, 2, "json:"
+APP_NAME, APP_VERSION = "PLANET GENESIS QQ/PB", "1.5.0"
+STATE_SCHEMA, GLOBAL_SCHEMA, SAVE_PREFIX = 5, 2, "gz:"
 MAX_SAVE, MAX_DECOMP, MAX_PROTOCOL, MAX_CMD, MAX_GLOBAL_USERS, MAX_BUILD, MAX_NUM = 8 * 1024 * 1024, 8 * 1024 * 1024, 20 * 1024 * 1024, 4096, 5000, 1000, 1e300
 BASE_OFFLINE, OFFLINE_PER_TECH, MAX_OFFLINE = 8, 4, 72
+
+# 自动机：星核解锁、独立储存离线时间，不影响正常离线生产结算
+AUTO_UNLOCK_COST = 10
+AUTO_BANK_MIN_GAP = 60
+AUTO_BASE_BANK = 3600
+AUTO_BANK_PER_LEVEL = 3600
+AUTO_CAPACITY_MAX = 10
+AUTO_EXEC_MAX = 8
+AUTO_MAX_SLOTS = 12
+AUTO_MAX_BOUGHT_SLOTS = 7
+AUTO_MAX_SCRIPT = 3000
+AUTO_MAX_OPS = 200
+AUTO_PROGRESS_SLOT_LAUNCHES = (1, 3, 10, 25, 50)
 
 RM = {"energy": ("☀️", "恒星能"), "mineral": ("🪨", "矿物"), "water": ("💧", "水"), "air": ("🌫️", "大气"), "biomass": ("🌱", "生物量"), "civilization": ("🏙️", "文明")}
 RSRC_HINT = {"energy": "##planet tap 1 或 ##planet build 日照阵列", "mineral": "##planet build 地壳钻机", "water": "##planet build 融冰塔", "air": "##planet build 大气工厂", "biomass": "##planet build 生态穹顶", "civilization": "##planet build 城市节点"}
@@ -209,9 +222,9 @@ def enc(v):
 def dec(v):
     if not isinstance(v, str):
         raise ValueError("save must be text")
-    if v.startswith("gz:"):
+    if v.startswith(SAVE_PREFIX):
         try:
-            encoded = v[3:]
+            encoded = v[len(SAVE_PREFIX):]
             compressed = base64.b64decode(encoded.encode("ascii"), validate=True)
             inflater = zlib.decompressobj(16 + zlib.MAX_WBITS)
             raw = inflater.decompress(compressed, MAX_DECOMP + 1)
@@ -259,7 +272,7 @@ def fresh_state(now=None):
     t = {k: 0 for k in T}
     r = {k: 0 for k in RM}
     r["energy"] = st_energy(t)
-    return {"schema": STATE_SCHEMA, "created_at": now, "last_tick": now, "resources": r, "cycle_generated": {k: 0 for k in RM}, "lifetime_generated": {k: 0 for k in RM}, "buildings": {k: 0 for k in B}, "orbit": "balance", "expansions": 0, "cores": 0, "cores_total": 0, "launches": 0, "techs": t, "taps": 0, "known_recipes": [], "clues_seen": [], "discoveries": [], "crafted_recipes": [], "challenge_claimed": [], "stage_seen": 0, "scan_count": 0, "last_crank": 0, "crank_count": 0, "milestones_claimed": [], "auras": [], "event_cooldown": 0, "crank_time_bonus": 0, "speedrun_record": 0, "notation": "standard"}
+    return {"schema": STATE_SCHEMA, "created_at": now, "last_tick": now, "resources": r, "cycle_generated": {k: 0 for k in RM}, "lifetime_generated": {k: 0 for k in RM}, "buildings": {k: 0 for k in B}, "orbit": "balance", "expansions": 0, "cores": 0, "cores_total": 0, "launches": 0, "techs": t, "taps": 0, "known_recipes": [], "clues_seen": [], "discoveries": [], "crafted_recipes": [], "challenge_claimed": [], "stage_seen": 0, "scan_count": 0, "last_crank": 0, "crank_count": 0, "milestones_claimed": [], "auras": [], "event_cooldown": 0, "crank_time_bonus": 0, "speedrun_record": 0, "speedrun_invalid_legacy": 0, "automation_unlocked": False, "automation_time": 0, "automation_exec_level": 0, "automation_capacity_level": 0, "automation_slots_bought": 0, "automation_programs": {}, "notation": "standard"}
 
 def fresh_global():
     return {"schema": GLOBAL_SCHEMA, "users": {}, "speedrun": {}}
@@ -310,11 +323,53 @@ def migrate_state(s, now=None):
     base["event_cooldown"] = cl(s.get("event_cooldown", 0))
     base["stage_seen"] = si(s.get("stage_seen"), 0, 0, len(PS) - 1)
     base["crank_time_bonus"] = cl(s.get("crank_time_bonus", 0))
-    base["speedrun_record"] = cl(s.get("speedrun_record", 0))
+    # 旧版若产生负竞速记录：活动记录归零，但保留原值以便排查，不再静默吞掉。
+    try:
+        raw_sr = float(s.get("speedrun_record", 0))
+    except:
+        raw_sr = 0.0
+    if math.isfinite(raw_sr) and raw_sr > 0:
+        base["speedrun_record"] = min(raw_sr, MAX_NUM)
+    else:
+        base["speedrun_record"] = 0
+        if math.isfinite(raw_sr) and raw_sr < 0:
+            base["speedrun_invalid_legacy"] = raw_sr
+    try:
+        legacy_sr = float(s.get("speedrun_invalid_legacy", base.get("speedrun_invalid_legacy", 0)))
+        if math.isfinite(legacy_sr) and legacy_sr < 0:
+            base["speedrun_invalid_legacy"] = legacy_sr
+    except:
+        pass
+    try:
+        raw_best = float(s.get("best_elapsed", MAX_NUM))
+    except:
+        raw_best = MAX_NUM
+    base["best_elapsed"] = min(raw_best, MAX_NUM) if math.isfinite(raw_best) and raw_best > 0 else MAX_NUM
+
+    # 自动机状态迁移。程序只保存纯文本，旧存档自动补默认值。
+    base["automation_unlocked"] = bool(s.get("automation_unlocked", False))
+    base["automation_exec_level"] = si(s.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+    base["automation_capacity_level"] = si(s.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+    base["automation_slots_bought"] = si(s.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
+    base["automation_time"] = min(cl(s.get("automation_time", 0)), automation_time_cap(base)) if base["automation_unlocked"] else 0
+    programs = s.get("automation_programs", {})
+    if isinstance(programs, dict):
+        clean_programs = {}
+        for key, script in programs.items():
+            try:
+                slot = int(key)
+            except:
+                continue
+            if 1 <= slot <= AUTO_MAX_SLOTS and isinstance(script, str):
+                script = script.strip()[:AUTO_MAX_SCRIPT]
+                if script:
+                    clean_programs[str(slot)] = script
+        base["automation_programs"] = clean_programs
+
     for k, allowed in (("known_recipes", set(SR)), ("clues_seen", set(SR)), ("crafted_recipes", set(SR)), ("discoveries", set(SE)), ("milestones_claimed", set([m["id"] for m in MILESTONES])), ("auras", set([a["id"] for a in AURAS]))):
         v = s.get(k)
         if isinstance(v, list):
-            base[k] = [x for x in v if x in allowed]
+            base[k] = list(dict.fromkeys(x for x in v if x in allowed))
     claimed = s.get("challenge_claimed")
     if isinstance(claimed, list):
         base["challenge_claimed"] = sorted({si(x, -1) for x in claimed if 0 <= si(x, -1) < len(SC)})
@@ -322,7 +377,6 @@ def migrate_state(s, now=None):
     if orb:
         base["orbit"] = orb
     base["notation"] = s.get("notation","standard")
-    base["best_elapsed"] = s.get("best_elapsed",MAX_NUM)
     base["schema"] = STATE_SCHEMA
     return base
 
@@ -355,13 +409,41 @@ def slot_cap(s):
 def slots_used(s):
     return sum(s["buildings"][k] * B[k]["slots"] for k in B)
 
+def automation_cmd_cost(s):
+    lv = si(s.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+    return max(1.0, 5.0 * (0.80 ** lv))
+
+def automation_time_cap(s):
+    lv = si(s.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+    return AUTO_BASE_BANK + AUTO_BANK_PER_LEVEL * lv
+
+def automation_progress_slots(s):
+    launches = si(s.get("launches"), 0, 0, 10**12)
+    return sum(1 for n in AUTO_PROGRESS_SLOT_LAUNCHES if launches >= n)
+
+def automation_slot_cap(s):
+    bought = si(s.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
+    return min(AUTO_MAX_SLOTS, 1 + automation_progress_slots(s) + bought)
+
+def automation_exec_upgrade_cost(s):
+    lv = si(s.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+    return 4 + 2 * lv * lv
+
+def automation_capacity_upgrade_cost(s):
+    lv = si(s.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+    return 5 * (lv + 1)
+
+def automation_slot_buy_cost(s):
+    n = si(s.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
+    return 8 + 4 * n + 2 * n * n
+
 def global_mult(s):
     mult = (1.12**s["buildings"]["ring"]) * (1.20**s["techs"]["fusion"]) * (1 + 0.04 * s["cores_total"])
-    for mid in s.get("milestones_claimed", []):
+    for mid in set(s.get("milestones_claimed", [])):
         for ms in MILESTONES:
             if ms["id"] == mid and "global_prod" in ms["reward"]:
                 mult *= (1 + ms["reward"]["global_prod"])
-    for aid in s.get("auras", []):
+    for aid in set(s.get("auras", [])):
         for aura in AURAS:
             if aura["id"] == aid and "all" in aura["effect"]:
                 mult *= aura["effect"]["all"]
@@ -369,7 +451,7 @@ def global_mult(s):
 
 def aura_resource_mult(s, res):
     mult = 1.0
-    for aid in s.get("auras", []):
+    for aid in set(s.get("auras", [])):
         for aura in AURAS:
             if aura["id"] == aid:
                 eff = aura.get("effect", {})
@@ -585,6 +667,7 @@ def formula_text():
 【11 手摇】基础加速2分钟，冷却10秒。传动装置+0.2分钟（12秒）/座，-0.15秒/座冷却。最低3秒。手摇加速游戏内计时，影响竞速榜！
 【12 里程碑】永久加成，跨启航保留。查看：##planet milestone (m)
 【13 光环】星核购买，永久生效。查看：##planet aura (au)
+【14 自动机】10星核解锁。离线间隔额外存入自动机时间池且不扣正常离线结算；基础每条指令5秒，执行器升级按×0.8递减，最低1秒。缓存基础1小时，每级+1小时。脚本槽在启航 1/3/10/25/50 次时各+1，也可用星核购买。repeat/if/while流程控制本身0耗时。
 无抽奖无概率，一切确定。"""
 
 def version_text():
@@ -651,6 +734,7 @@ sp = speedrun   (竞速榜)
 ex = export     (导出)
 im = import     (导入)
 nt = notation   (计数法)
+auto = automation (自动机)
 
 【随时查看状态】
 ##planet state (或 ##planet st 或 ##planet s)
@@ -685,26 +769,29 @@ def rules_text():
     return "\n\n".join(HP)
 
 HP = (
-    """【1/7｜目标/格式/起步】从裸岩星开始，把辐射转化为文明。无随机无抽奖。
+    """【1/8｜目标/格式/起步】从裸岩星开始，把辐射转化为文明。无随机无抽奖。
 格式：##planet <命令> <参数> (支持缩写)
 开局：##planet tap 2 → ##planet build 日照阵列 → 等资源增长
 常用缩写：st(状态) b(建造) cr(手摇) pl(星球) h(帮助)""",
-    """【2/7｜资源与阶段】链：☀️恒星能→🪨矿物→💧水→🌫️大气→🌱生物量→🏙️文明
+    """【2/8｜资源与阶段】链：☀️恒星能→🪨矿物→💧水→🌫️大气→🌱生物量→🏙️文明
 阶段：裸岩星→觉醒地核(矿物100)→原始海洋(水100)→稠密大气(大气100)→生命摇篮(生物100)→城市行星(文明100)→星际母星(文明1000)
 查看：##planet planet (pl)""",
-    """【3/7｜建筑】日照阵列(1槽+1能/s) 钻机(2槽+0.35矿/s) 融冰塔(3槽+0.12水/s) 大气工厂(4槽+0.05大气/s) 生态穹顶(6槽+0.018生物/s) 城市节点(8槽+0.004文明/s) 轨道环(12槽全产×1.12) 传动装置(2槽手摇强化：+0.2分钟/座，-0.15秒冷却/座)
+    """【3/8｜建筑】日照阵列(1槽+1能/s) 钻机(2槽+0.35矿/s) 融冰塔(3槽+0.12水/s) 大气工厂(4槽+0.05大气/s) 生态穹顶(6槽+0.018生物/s) 城市节点(8槽+0.004文明/s) 轨道环(12槽全产×1.12) 传动装置(2槽手摇强化：+0.2分钟/座，-0.15秒冷却/座)
 购买：##planet build (b) <建筑> [数量|max]  拆除：##planet dismantle (d)
 扩建：##planet expand (e) (+12槽)""",
-    """【4/7｜轨道/离线】##planet orbit (o) 恒星|地质|海洋|气候|生态|文明|平衡
+    """【4/8｜轨道/离线】##planet orbit (o) 恒星|地质|海洋|气候|生态|文明|平衡
 单项×2，平衡×1.18。离线默认8小时，休眠每级+4h，最高72h。建筑不消耗上游资源。""",
-    """【5/7｜启航/星核/科技】文明≥1000可启航：##planet launch (l) → confirm
+    """【5/8｜启航/星核/科技】文明≥1000可启航：##planet launch (l) → confirm
 收益=floor(sqrt(文明/1000))，至少1星核。
 永久科技：##planet tech (te) <恒星聚变|自动化|休眠|板块|档案> 下级需L+1星核。""",
-    """【6/7｜排行/资料】##planet rank (r) 全服榜  ##planet speedrun (sp) 竞速榜(手摇加速计时)  ##planet atlas 图鉴  ##planet formula 公式  ##planet rules 规则  ##planet tutorial 教程  ##planet version 版本  ##planet reset (无缩写) 清档""",
-    """【7/7｜手摇/里程碑/光环】##planet crank (cr) 手摇加速2分钟(10秒冷却)。传动装置强化手摇，同时加速游戏内计时。
-##planet milestone (m) 查看永久里程碑。##planet aura (au) [buy] 查看或购买光环。"""
+    """【6/8｜排行/资料】##planet rank (r) 全服榜  ##planet speedrun (sp) 竞速榜(手摇加速计时)  ##planet atlas 图鉴  ##planet formula 公式  ##planet rules 规则  ##planet tutorial 教程  ##planet version 版本  ##planet reset (无缩写) 清档""",
+    """【7/8｜手摇/里程碑/光环】##planet crank (cr) 手摇加速2分钟(10秒冷却)。传动装置强化手摇，同时加速游戏内计时。
+##planet milestone (m) 查看永久里程碑。##planet aura (au) [buy] 查看或购买光环。""",
+    """【8/8｜自动机】##planet auto 查看。10星核永久解锁；额外缓存离线间隔时间，不影响正常生产。
+保存脚本：##planet auto save <槽> <脚本>；运行：##planet auto run <槽>。分号分隔命令；repeat/if/while 为0耗时流程控制，实际游戏指令消耗缓存时间。
+执行器/缓存容量/脚本槽都可继续消耗星核升级，脚本槽在启航1/3/10/25/50次时各+1，也可用星核购买。"""
 )
-HP_TOPIC = {"资源": 2, "resource": 2, "阶段": 2, "建筑": 3, "build": 3, "槽位": 3, "扩建": 3, "轨道": 4, "orbit": 4, "离线": 4, "启航": 5, "launch": 5, "星核": 5, "科技": 5, "tech": 5, "排行": 6, "rank": 6, "竞速": 6, "speedrun": 6, "公式": 6, "formula": 6, "挑战": 6, "手摇": 7, "crank": 7, "里程碑": 7, "milestone": 7, "光环": 7, "aura": 7}
+HP_TOPIC = {"资源": 2, "resource": 2, "阶段": 2, "建筑": 3, "build": 3, "槽位": 3, "扩建": 3, "轨道": 4, "orbit": 4, "离线": 4, "启航": 5, "launch": 5, "星核": 5, "科技": 5, "tech": 5, "排行": 6, "rank": 6, "竞速": 6, "speedrun": 6, "公式": 6, "formula": 6, "挑战": 6, "手摇": 7, "crank": 7, "里程碑": 7, "milestone": 7, "光环": 7, "aura": 7, "自动机": 8, "automation": 8, "auto": 8}
 HC = {
     "help": {"aliases": ("h", "帮助"), "title": "HELP", "body": "##planet help (h) [命令|页码] 例：##planet help build"},
     "status": {"aliases": ("st", "s", "状态", "me"), "title": "STATUS", "body": "##planet state (st/s) 查看资源/产出/槽位/星核"},
@@ -731,6 +818,7 @@ HC = {
     "crank": {"aliases": ("cr", "摇", "手摇", "转"), "title": "CRANK", "body": "##planet crank (cr) 手摇加速2分钟（10秒冷却）。传动装置强化效果，同时加速游戏内计时！"},
     "milestone": {"aliases": ("m", "里程碑", "成就", "achieve"), "title": "MILESTONE", "body": "##planet milestone (m) 查看永久里程碑进度与奖励。"},
     "aura": {"aliases": ("au", "光环", "星核光环", "buff"), "title": "AURA", "body": "##planet aura (au) 查看光环列表；##planet aura buy <名称> 购买。"},
+    "automation": {"aliases": ("auto", "自动机", "自动化脚本"), "title": "AUTOMATION", "body": "##planet auto 查看；unlock 解锁；upgrade speed|capacity 升级；slot 扩槽；save/run 保存并运行脚本。"},
     "play": {"aliases": ("新手", "开始"), "title": "PLAY", "body": "##planet play 查看完整新手引导与缩写列表。"},
 }
 HC_ALIAS = {}
@@ -741,15 +829,15 @@ for c, item in HC.items():
             HC_ALIAS[n] = c
 
 HELP_INDEX = """PLANET GENESIS｜帮助目录 (支持缩写)
-分页：##planet help 1-7
-1目标/格式 2资源/阶段 3建筑 4轨道/离线 5启航/科技 6排行/资料 7手摇/里程碑/光环
-命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) nt(计数法) | reset(无缩写) | play(新手引导)"""
+分页：##planet help 1-8
+1目标/格式 2资源/阶段 3建筑 4轨道/离线 5启航/科技 6排行/资料 7手摇/里程碑/光环 8自动机
+命令索引(缩写)：st/s(状态) pl(星球) b(建造) d(拆除) o(轨道) e(扩建) ch(挑战) ev(事件) sc(扫描) sy(合成) te(科技) l(启航) r(排行) sp(竞速榜) cr(手摇) m(里程碑) au(光环) auto(自动机) nt(计数法) | reset(无缩写) | play(新手引导)"""
 
 def help_page(page=None):
     t = " ".join(str(page or "").strip().lower().split())
     if not t:
         return HELP_INDEX
-    if re.fullmatch(r"[1-7]", t):
+    if re.fullmatch(r"[1-8]", t):
         n = int(t)
         nav = []
         if n > 1:
@@ -785,6 +873,12 @@ class Game:
         self.state = migrate_state(ld(ctx.get("storage", {}), fresh_state(self.now)), self.now)
         self.gstate = migrate_global(ld(ctx.get("global", {}), fresh_global()))
         self.elapsed, self.applied, self.ogains = settle(self.state, self.now)
+        self.auto_banked = 0.0
+        if self.state.get("automation_unlocked") and self.elapsed >= AUTO_BANK_MIN_GAP:
+            before = cl(self.state.get("automation_time", 0))
+            after = min(automation_time_cap(self.state), before + self.elapsed)
+            self.state["automation_time"] = after
+            self.auto_banked = max(0.0, after - before)
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
 
     def _check_milestones(self):
@@ -811,27 +905,24 @@ class Game:
         return []
     def grant_milestone(self, msid):
         s = self.state
-        claimed = list(set(s.get("milestones_claimed", [])))
-        new = []
+        claimed = list(dict.fromkeys(s.get("milestones_claimed", [])))
+        if msid in claimed:
+            return []
         for ms in MILESTONES:
-            if ms["id"] in claimed:
+            if ms["id"] != msid:
                 continue
-            if not (ms["id"] in claimed) and ms["id"] == msid:
-                claimed.append(ms["id"])
-                claimed = list(set(s.get("milestones_claimed", [])))
-                new.append(ms)
-                for k, v in ms["reward"].items():
-                    if k == "global_prod":
-                        pass
-                    elif k == "cores":
-                        s["cores"] = cl(s["cores"] + v)
-                        s["cores_total"] = cl(s["cores_total"] + v)
-                    elif k == "crank_cooldown":
-                        pass       
-        if new:
-            s["milestones_claimed"] = list(claimed)
-            return new
-        return []         
+            claimed.append(msid)
+            s["milestones_claimed"] = claimed
+            for k, v in ms["reward"].items():
+                if k == "global_prod":
+                    pass
+                elif k == "cores":
+                    s["cores"] = cl(s["cores"] + v)
+                    s["cores_total"] = cl(s["cores_total"] + v)
+                elif k == "crank_cooldown":
+                    pass
+            return [ms]
+        return []
 
     def status(self):
         s = self.state
@@ -849,6 +940,13 @@ class Game:
         lines.append(f"🔄 手摇｜加速{fm(crank_time/60,notation)}分钟｜冷却{fm(crank_cd,notation)}秒｜传动{s['buildings']['transmission']}座")
         lines.append(f"🧱 槽位 {slots_used(s)}/{slot_cap(s)}｜轨道：{OM[s['orbit']][0]}")
         lines.append(f"💠 星核 {s['cores']}可用 / {s['cores_total']}累计｜🚀 启航 {s['launches']}次")
+        if s.get("automation_unlocked"):
+            bank = cl(s.get("automation_time", 0))
+            cap = automation_time_cap(s)
+            add = f"｜本次缓存+{fs(self.auto_banked)}" if self.auto_banked >= 1 else ""
+            lines.append(f"🤖 自动机｜时间{fs(bank)}/{fs(cap)}｜指令{automation_cmd_cost(s):.2f}s/条｜槽位{len(s.get('automation_programs', {}))}/{automation_slot_cap(s)}{add}")
+        if s.get("speedrun_invalid_legacy", 0) < 0:
+            lines.append(f"⚠ 旧版异常竞速记录 {s['speedrun_invalid_legacy']:.3f}s 已隔离，未计入排行")
         if self.elapsed >= 60 and self.applied > 0:
             suffix = "（只结算" + fs(self.applied) + "上限）" if self.applied + 1 < self.elapsed else ""
             nz = [f"+{fm(self.ogains[k],notation)}{RM[k][0]}" for k in RM if self.ogains[k] > 0]
@@ -1241,7 +1339,7 @@ class Game:
             if gain <= 0:
                 civ = self.state["cycle_generated"]["civilization"]
                 return f"🚀 未达条件｜文明{fm(civ,notation)}/{fm(1000,notation)}"
-            return f"🚀 启航｜可获得{gain}星核\n清空：资源/累计/建筑/扩建/轨道/合成/挑战\n保留：星核/科技/配方/事件/历史/启航次数/里程碑/光环\n确认：##planet launch confirm"
+            return f"🚀 启航｜可获得{gain}星核\n清空：资源/累计/建筑/扩建/轨道/合成/挑战\n保留：星核/科技/配方/事件/历史/启航次数/里程碑/光环/自动机\n确认：##planet launch confirm"
         if gain <= 0:
             return "⚠ 文明不足1000"
         old = self.state
@@ -1292,6 +1390,13 @@ class Game:
         new["best_elapsed"] = best_elapsed
         new["crank_time_bonus"] = 0
         new["speedrun_record"] = old.get("speedrun_record", 0)
+        new["speedrun_invalid_legacy"] = old.get("speedrun_invalid_legacy", 0)
+        new["automation_unlocked"] = bool(old.get("automation_unlocked", False))
+        new["automation_time"] = min(cl(old.get("automation_time", 0)), automation_time_cap(old))
+        new["automation_exec_level"] = si(old.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+        new["automation_capacity_level"] = si(old.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+        new["automation_slots_bought"] = si(old.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
+        new["automation_programs"] = dict(old.get("automation_programs", {}))
         if new_ms:
             names = " / ".join([ms["name"] for ms in new_ms])
             text_milestones=f"🎉 新里程碑达成：{names}！"
@@ -1357,6 +1462,250 @@ class Game:
         s["auras"] = list(owned)
         return f"⭐ 购买成功｜{target['name']}\n效果：{target['desc']}\n剩余星核 {s['cores']}"
 
+    def _auto_value(self, name):
+        key = str(name).strip().lower()
+        rk = RA.get(key)
+        if rk:
+            return float(self.state["resources"].get(rk, 0))
+        if key in ("core", "cores", "星核"):
+            return float(self.state.get("cores", 0))
+        if key in ("slot", "slots", "空槽", "剩余槽位"):
+            return float(max(0, slot_cap(self.state) - slots_used(self.state)))
+        if key in ("launch", "launches", "启航"):
+            return float(self.state.get("launches", 0))
+        return None
+
+    def _auto_condition(self, text):
+        m = re.fullmatch(r"\s*([^\s]+)\s*(>=|<=|==|=|>|<)\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)\s*", text)
+        if not m:
+            return None
+        left = self._auto_value(m.group(1))
+        if left is None:
+            return None
+        right = float(m.group(3))
+        op = m.group(2)
+        return {">=": left >= right, "<=": left <= right, "==": abs(left-right) <= 1e-9, "=": abs(left-right) <= 1e-9, ">": left > right, "<": left < right}[op]
+
+    def _auto_exec_one(self, command):
+        raw = strip_prefix(command)
+        if not raw:
+            return False, "空指令"
+        head = raw.split()[0].lower()
+        allowed = {
+            "tap", "点", "采光", "ta", "build", "b", "建筑", "建造", "dismantle", "d", "拆", "拆除",
+            "orbit", "o", "轨道", "策略", "expand", "e", "扩建", "扩", "challenge", "ch", "挑战", "任务",
+            "scan", "sc", "扫描", "探索", "探测", "synth", "sy", "合成", "合成器", "mix", "tech", "科技", "研究", "te",
+            "launch", "l", "启航", "跃迁", "crank", "摇", "手摇", "转", "cr", "aura", "au", "光环", "星核光环", "buff"
+        }
+        if head not in allowed:
+            return False, f"自动机禁止执行：{head}"
+        cost = automation_cmd_cost(self.state)
+        bank = cl(self.state.get("automation_time", 0))
+        if bank + 1e-9 < cost:
+            return False, f"存储时间不足（需要{cost:.2f}s，剩余{bank:.2f}s）"
+        self.state["automation_time"] = max(0.0, bank - cost)
+        packet = self.run(raw)
+        content = str(packet.get("content", ""))
+        first = content.splitlines()[0] if content else "已执行"
+        return True, first
+
+    def _auto_run_script(self, script):
+        statements = [x.strip() for x in re.split(r"[;；]", str(script)) if x.strip()]
+        if not statements:
+            return "⚠ 自动机脚本为空"
+        logs = []
+        ops = 0
+        stopped = ""
+
+        def run_command(cmd):
+            nonlocal ops, stopped
+            if ops >= AUTO_MAX_OPS:
+                stopped = f"达到单次{AUTO_MAX_OPS}条指令上限"
+                return False
+            ok, msg = self._auto_exec_one(cmd)
+            if not ok:
+                stopped = msg
+                return False
+            ops += 1
+            if len(logs) < 20:
+                logs.append(f"{ops}. {cmd} → {msg}")
+            return True
+
+        for stmt in statements:
+            if stopped:
+                break
+            m = re.fullmatch(r"(?:repeat|重复)\s+(\d+)\s+(.+)", stmt, re.I)
+            if m:
+                count = min(int(m.group(1)), AUTO_MAX_OPS)
+                cmd = m.group(2).strip()
+                for _ in range(count):
+                    if not run_command(cmd):
+                        break
+                continue
+            m = re.fullmatch(r"(?:if|如果)\s+(.+?)\s+(?:then|则)\s+(.+)", stmt, re.I)
+            if m:
+                cond = self._auto_condition(m.group(1))
+                if cond is None:
+                    stopped = f"无法解析条件：{m.group(1)}"
+                    break
+                if cond:
+                    run_command(m.group(2).strip())
+                continue
+            m = re.fullmatch(r"(?:while|当)\s+(.+?)\s+(?:then|则)\s+(.+)", stmt, re.I)
+            if m:
+                cond_text, cmd = m.group(1), m.group(2).strip()
+                while True:
+                    cond = self._auto_condition(cond_text)
+                    if cond is None:
+                        stopped = f"无法解析条件：{cond_text}"
+                        break
+                    if not cond:
+                        break
+                    before = self._auto_value(cond_text.split()[0])
+                    if not run_command(cmd):
+                        break
+                    after = self._auto_value(cond_text.split()[0])
+                    if before is not None and after is not None and abs(before-after) <= 1e-12:
+                        stopped = f"while 条件值未变化，已停止防止死循环：{cond_text}"
+                        break
+                continue
+            run_command(stmt)
+
+        bank = cl(self.state.get("automation_time", 0))
+        head = f"🤖 自动机执行完成｜执行{ops}条｜剩余时间{fs(bank)}"
+        if stopped:
+            head += f"\n⏹ {stopped}"
+        if ops > len(logs):
+            logs.append(f"…其余{ops-len(logs)}条已执行，日志省略")
+        return head + (("\n" + "\n".join(logs)) if logs else "")
+
+    def automation(self, args):
+        s = self.state
+        if not args:
+            if not s.get("automation_unlocked"):
+                return f"🤖 自动机｜未解锁\n消耗{AUTO_UNLOCK_COST}星核解锁：##planet auto unlock\n解锁后会额外缓存离线间隔时间，不影响正常生产结算。"
+            exec_lv = si(s.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+            cap_lv = si(s.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+            slots = automation_slot_cap(s)
+            programs = s.get("automation_programs", {})
+            lines = [
+                f"🤖 自动机｜时间 {fs(s.get('automation_time',0))}/{fs(automation_time_cap(s))}",
+                f"执行器 Lv{exec_lv}/{AUTO_EXEC_MAX}｜每条{automation_cmd_cost(s):.2f}s",
+                f"缓存 Lv{cap_lv}/{AUTO_CAPACITY_MAX}｜脚本槽 {len(programs)}/{slots}（启航进度+购买扩展）",
+            ]
+            if exec_lv < AUTO_EXEC_MAX:
+                lines.append(f"执行器升级：{automation_exec_upgrade_cost(s)}星核｜##planet auto upgrade speed")
+            if cap_lv < AUTO_CAPACITY_MAX:
+                lines.append(f"缓存升级：{automation_capacity_upgrade_cost(s)}星核｜##planet auto upgrade capacity")
+            if s.get("automation_slots_bought",0) < AUTO_MAX_BOUGHT_SLOTS and slots < AUTO_MAX_SLOTS:
+                lines.append(f"购买槽位：{automation_slot_buy_cost(s)}星核｜##planet auto slot")
+            lines.append("保存：##planet auto save <槽位> <脚本>｜分号 ; / ； 分隔多条")
+            lines.append("控制：repeat N <指令>；if 条件 then <指令>；while 条件 then <指令>（控制语句本身0耗时）")
+            lines.append("条件支持资源/星核/空槽/启航，例如：if 恒星能 >= 100 then b 日照")
+            lines.append("运行：##planet auto run <槽位>｜查看：##planet auto show <槽位>｜删除：##planet auto delete <槽位>")
+            if programs:
+                lines.append("【已保存】")
+                for key in sorted(programs, key=lambda x: int(x)):
+                    preview = programs[key].replace("\n", " ")[:70]
+                    lines.append(f"槽{key}｜{preview}{'…' if len(programs[key]) > 70 else ''}")
+            return "\n".join(lines)
+
+        sub = args[0].lower()
+        if sub in ("unlock", "解锁"):
+            if s.get("automation_unlocked"):
+                return "⚠ 自动机已解锁"
+            if s["cores"] < AUTO_UNLOCK_COST:
+                return f"⚠ 星核不足｜解锁自动机需要{AUTO_UNLOCK_COST}，当前{s['cores']}"
+            s["cores"] -= AUTO_UNLOCK_COST
+            s["automation_unlocked"] = True
+            s["automation_time"] = 0
+            return f"🤖 自动机已解锁｜消耗{AUTO_UNLOCK_COST}星核\n从下一段≥{AUTO_BANK_MIN_GAP}秒的离线间隔开始缓存时间；正常离线生产照常结算。"
+        if not s.get("automation_unlocked"):
+            return f"⚠ 自动机未解锁｜##planet auto unlock（{AUTO_UNLOCK_COST}星核）"
+
+        if sub in ("upgrade", "升级"):
+            if len(args) < 2:
+                return "⚠ 用法：##planet auto upgrade speed|capacity"
+            target = args[1].lower()
+            if target in ("speed", "executor", "执行器", "速度"):
+                lv = si(s.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+                if lv >= AUTO_EXEC_MAX:
+                    return "⚠ 自动机执行器已满级"
+                cost = automation_exec_upgrade_cost(s)
+                if s["cores"] < cost:
+                    return f"⚠ 星核不足｜需要{cost}"
+                before = automation_cmd_cost(s)
+                s["cores"] -= cost
+                s["automation_exec_level"] = lv + 1
+                return f"🤖 执行器 Lv{lv}→{lv+1}｜{before:.2f}s→{automation_cmd_cost(s):.2f}s/条｜消耗{cost}星核"
+            if target in ("capacity", "storage", "缓存", "容量", "存储"):
+                lv = si(s.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+                if lv >= AUTO_CAPACITY_MAX:
+                    return "⚠ 自动机缓存已满级"
+                cost = automation_capacity_upgrade_cost(s)
+                if s["cores"] < cost:
+                    return f"⚠ 星核不足｜需要{cost}"
+                before = automation_time_cap(s)
+                s["cores"] -= cost
+                s["automation_capacity_level"] = lv + 1
+                return f"🤖 缓存 Lv{lv}→{lv+1}｜{fs(before)}→{fs(automation_time_cap(s))}｜消耗{cost}星核"
+            return "⚠ 可升级：speed（执行耗时）/ capacity（时间容量）"
+
+        if sub in ("slot", "槽位", "扩槽"):
+            if s.get("automation_slots_bought", 0) >= AUTO_MAX_BOUGHT_SLOTS or automation_slot_cap(s) >= AUTO_MAX_SLOTS:
+                return "⚠ 自动机脚本槽已达到上限"
+            cost = automation_slot_buy_cost(s)
+            if s["cores"] < cost:
+                return f"⚠ 星核不足｜购买脚本槽需要{cost}"
+            s["cores"] -= cost
+            s["automation_slots_bought"] = s.get("automation_slots_bought", 0) + 1
+            return f"🤖 脚本槽 +1｜当前上限{automation_slot_cap(s)}｜消耗{cost}星核"
+
+        if sub in ("save", "保存"):
+            if len(args) < 3:
+                return "⚠ 用法：##planet auto save <槽位> <脚本>"
+            try:
+                slot = int(args[1])
+            except:
+                return "⚠ 槽位必须是数字"
+            cap = automation_slot_cap(s)
+            if not 1 <= slot <= cap:
+                return f"⚠ 槽位范围 1-{cap}"
+            script = " ".join(args[2:]).strip()
+            if not script:
+                return "⚠ 脚本不能为空"
+            if len(script) > AUTO_MAX_SCRIPT:
+                return f"⚠ 脚本过长｜最多{AUTO_MAX_SCRIPT}字符"
+            s.setdefault("automation_programs", {})[str(slot)] = script
+            return f"💾 自动机槽{slot}已保存\n{script}"
+
+        if sub in ("show", "查看"):
+            if len(args) < 2:
+                return "⚠ 用法：##planet auto show <槽位>"
+            key = str(si(args[1], 0))
+            script = s.get("automation_programs", {}).get(key)
+            return f"🤖 槽{key}\n{script}" if script else f"⚠ 槽{key}为空"
+
+        if sub in ("delete", "del", "删除", "清除"):
+            if len(args) < 2:
+                return "⚠ 用法：##planet auto delete <槽位>"
+            key = str(si(args[1], 0))
+            if key not in s.get("automation_programs", {}):
+                return f"⚠ 槽{key}为空"
+            del s["automation_programs"][key]
+            return f"🗑 自动机槽{key}已删除"
+
+        if sub in ("run", "运行", "执行"):
+            if len(args) < 2:
+                return "⚠ 用法：##planet auto run <槽位>"
+            key = str(si(args[1], 0))
+            script = s.get("automation_programs", {}).get(key)
+            if not script:
+                return f"⚠ 槽{key}为空"
+            return self._auto_run_script(script)
+
+        return "⚠ 自动机命令：unlock / upgrade / slot / save / show / delete / run"
+
     def reset(self, args):
         if not args or args[0] != "CONFIRM":
             return "⚠ 永久清档，确认请输：##planet reset CONFIRM"
@@ -1366,27 +1715,27 @@ class Game:
     def export(self):
         try:
             data = enc(self.state)
-            compressed = gzip_text(data)
+            compressed = SAVE_PREFIX + gzip_text(data)
             return f"📦 导出存档成功！\n请复制以下内容保存：\n{compressed}"
         except Exception as e:
             return f"⚠ 导出失败：{str(e)}"
 
     def _import(self, args):
         if not args:
-            return "⚠ 用法：##planet import <压缩存档字符串>"
+            return "⚠ 用法：##planet import <存档字符串>"
         try:
-            raw = args[0]
-            decoded = ungzip_text(raw)
-            new_state = json.loads(decoded)
-            if not isinstance(new_state, dict):
+            raw = args[0].strip()
+            new_state = dec(raw)
+            if (not new_state) and (not raw.startswith(SAVE_PREFIX)):
+                # 兼容 v1.4.x 导出的无 gz: 前缀 Base64，同时沿用 dec() 的解压大小限制。
+                new_state = dec(SAVE_PREFIX + raw)
+            if not isinstance(new_state, dict) or not new_state:
                 return "⚠ 导入失败：数据格式错误"
             self.state = migrate_state(new_state, self.now)
             return f"✅ 导入存档成功！\n{self.status()}"
-        except json.JSONDecodeError as e:
-            return f"⚠ 导入失败：JSON解析错误 - {str(e)}"
         except Exception as e:
             return f"⚠ 导入失败：{str(e)}"
-    
+
     def change_notation(self, args):
         k="、".join([f"{a}/{AVAILABLE_NOTATIONS[a]}" for a in AVAILABLE_NOTATIONS])
         alias={"标准":"standard","标准计数法":"standard","标准记数法":"standard","std":"standard","d":"standard","1":"standard",\
@@ -1446,6 +1795,8 @@ class Game:
                 msg = self.milestone(args)
             elif c in ("aura", "au", "光环", "星核光环", "buff"):
                 msg = self.aura(args)
+            elif c in ("automation", "auto", "自动机", "自动化脚本"):
+                msg = self.automation(args)
             elif c in ("play", "新手", "开始"):
                 msg = play_text()
             elif c in ("atlas", "图鉴", "星图"):
@@ -1468,7 +1819,7 @@ class Game:
                 msg = self.change_notation(args)
             else:
                 msg = f"⚠ 未知命令：{parts[0]}\n##planet help 查看目录"
-        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im", "notation", "计数法", "记数法", "nt"}
+        quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "automation", "auto", "自动机", "自动化脚本", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im", "notation", "计数法", "记数法", "nt"}
         if c and c not in quiet:
             msg = self._post_action(msg)
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
