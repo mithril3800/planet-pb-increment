@@ -103,17 +103,18 @@ MILESTONES = [
     {"id": "speedrun_10h", "name": "🚀 慢速启航", "reward": {"global_prod": 0.01}, "desc": "在10h之内(含手摇时间)启航"},
     {"id": "speedrun_5h", "name": "🚀 中速启航", "reward": {"global_prod": 0.04, "cores": 1}, "desc": "在5h之内(含手摇时间)启航"},
     {"id": "speedrun_3h", "name": "🚀 快速启航", "reward": {"global_prod": 0.12, "cores": 2}, "desc": "在3h之内(含手摇时间)启航"},
-    {"id": "speedrun_1.5h", "name": "🚀 极速启航", "reward": {"global_prod": 0.25, "cores": 5, "stage_unlock":"simulation"}, "desc": "在1.5h之内(含手摇时间)启航"},
+    {"id": "speedrun_1.5h", "name": "🚀 极速启航", "reward": {"global_prod": 0.25, "cores": 5}, "desc": "在1.5h之内(含手摇时间)启航"},
     {"id": "civ_10k", "name": "🏛️ 文明先驱", "reward": {"cores": 1}, "desc": "历史文明总产出 ≥ 1万"},
     {"id": "civ_100k", "name": "🏛️ 文明领袖", "reward": {"cores": 3}, "desc": "历史文明总产出 ≥ 10万"},
     {"id": "civ_1m", "name": "🏛️ 文明传奇", "reward": {"cores": 5}, "desc": "历史文明总产出 ≥ 100万"},
     {"id": "crank_100", "name": "🔄 手摇达人", "reward": {"crank_cooldown": -0.5}, "desc": "累计手摇 100 次"},
     {"id": "crank_1000", "name": "🔄 手摇狂人", "reward": {"crank_cooldown": -1.0}, "desc": "累计手摇 1000 次"},
     {"id": "bulk_core_2", "name": "💠 双星系统", "reward": {"global_prod": 0.03, "cores": 1}, "desc": "一次启航获得至少2个星核"},
-    {"id": "bulk_core_5", "name": "💠 五星好评", "reward": {"global_prod": 0.07, "cores": 2}, "desc": "一次启航获得至少5个星核"},
+    {"id": "bulk_core_5", "name": "💠 五星好评", "reward": {"global_prod": 0.07, "cores": 2, "unlock":"simulation"}, "desc": "一次启航获得至少5个星核"},
     {"id": "bulk_core_10", "name": "💠 后羿射日", "reward": {"global_prod": 0.15, "cores": 3}, "desc": "一次启航获得至少10个星核"},
 ]
 
+UNLOCKS = {"simulation":"模拟"}
 AURAS = [
     {"id": "geo", "name": "🌍 地核光环", "cost": 3, "effect": {"mineral": 1.5}, "desc": "矿物产出 ×1.5"},
     {"id": "ocean", "name": "🌊 海洋光环", "cost": 3, "effect": {"water": 1.5}, "desc": "水产出 ×1.5"},
@@ -123,6 +124,9 @@ AURAS = [
     {"id": "star", "name": "⭐ 恒星光环", "cost": 10, "effect": {"all": 1.3}, "desc": "全部产出 ×1.3"},
 ]
 
+SIMULATIONS = [
+    {"id": "alpha", "name":"🌐 模拟α·渐缓", "desc":"每次购买建筑都会减缓生产，在3min内逐渐复原生产速率", "maxlavel":10, "point_mult":1}
+]
 def _now(fn=None):
     try:
         v = float((fn if fn else time.time)())
@@ -377,6 +381,11 @@ def migrate_state(s, now=None):
     if orb:
         base["orbit"] = orb
     base["notation"] = s.get("notation","standard")
+    base["simulation_state"] = s.get("simulation_state", {})
+    base["simulation_args"] = s.get("simulation_args", {})
+    base["simulation_best"] = s.get("simulation_best", {})
+    base["simulation_point"] = s.get("simulation_point", 0)
+    base["simulation_point_total"] = s.get("simulation_point_total", 0)
     base["schema"] = STATE_SCHEMA
     return base
 
@@ -1311,7 +1320,7 @@ class Game:
 
     def tech(self, args):
         if not args:
-            lines = [f"💠 科技｜星核{self.state['cores']}/{self.state['cores_total']}"]
+            lines = [f"💠 科技｜星核{self.state['cores']}/{self.state['cores_total']}｜模拟点数{self.get('simulation_point',0)}/{self.get('simulation_point_total',0)}"]
             for k, info in T.items():
                 lv = self.state["techs"][k]
                 c = "MAX" if lv >= info["max"] else str(tech_cost(self.state, k))
@@ -1428,6 +1437,8 @@ class Game:
                         reward_texts.append(f"+{v}星核")
                     elif k == "crank_cooldown":
                         reward_texts.append(f"手摇冷却{v}秒")
+                    elif k == "unlock":
+                        reward_texts.append(f"解锁新内容:{UNLOCKS[v]}")
                 lines.append(f"   ✅ 已领取｜奖励：{' '.join(reward_texts)}")
             lines.append("")
         return "\n".join(lines)
@@ -1747,6 +1758,16 @@ class Game:
             self.state["notation"] = "standard"
         self.state["notation"] = c
         return f"已将计数法切换为{AVAILABLE_NOTATIONS[c]}"
+    def simulation(self, args):
+        if "bulk_core_5" not in self.state.get("milestones_claimed", []):
+            return "未解锁模拟，需解锁里程碑【💠 五星好评】后方可解锁"
+        else:
+            if not args:
+                lines = []
+                for _ in SIMULATIONS:
+                    completions=self.state.get("simulation_best",{}).get(_["id"],0)
+                    lines.append(f"{_['name']}({_['id']})｜{_['desc']}｜已通过{completions}/{_['maxlevel']}级")
+
     def run(self, cmd):
         cmd = strip_prefix(cmd)
         c = ""
