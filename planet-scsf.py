@@ -125,7 +125,7 @@ AURAS = [
 ]
 
 SIMULATIONS = [
-    {"id": "alpha", "name":"🌐 模拟α·渐缓", "desc":"每次购买建筑都会减缓生产，在3min内逐渐复原生产速率", "maxlavel":10, "point_mult":1}
+    {"id": "alpha", "name":"🌐 模拟α·渐缓", "desc":"每次购买建筑都会减缓生产，在3min内逐渐复原生产速率", "maxlevel":10, "point_mult":1}
 ]
 def _now(fn=None):
     try:
@@ -604,7 +604,8 @@ def challenge_progress(s, idx):
     return ok, detail
 
 def planet_code(s):
-    return f"P-{s['launches']+1:03d}"
+    simtext="-SIM" if (list(set(s.get("simulation_state",{}).values())) not in [[],[0]]) else ""
+    return f"P{simtext}-{s['launches']+1:03d}"
 
 def get_crank_duration(s):
     """计算单次手摇加速时长（秒），基础2分钟，每座传动装置+12秒（0.2分钟）"""
@@ -1320,7 +1321,7 @@ class Game:
 
     def tech(self, args):
         if not args:
-            lines = [f"💠 科技｜星核{self.state['cores']}/{self.state['cores_total']}｜模拟点数{self.get('simulation_point',0)}/{self.get('simulation_point_total',0)}"]
+            lines = [f"💠 科技｜星核{self.state['cores']}/{self.state['cores_total']}｜模拟点数{self.state.get('simulation_point',0)}/{self.state.get('simulation_point_total',0)}"]
             for k, info in T.items():
                 lv = self.state["techs"][k]
                 c = "MAX" if lv >= info["max"] else str(tech_cost(self.state, k))
@@ -1340,16 +1341,16 @@ class Game:
         self.state["techs"][k] += 1
         return f"💠 {info['name']} Lv{lv}→{lv+1}｜消耗{cost}星核\n{info['desc']}"
 
-    def launch(self, args):
+    def launch(self, args, forced=0, launchtext="启航完成"):
         gain = launch_gain(self.state)
         notation = self.state.get("notation","standard")
-        confirm = bool(args and args[0].lower() in ("confirm", "确认", "yes", "y"))
-        if not confirm:
+        confirm = forced or bool(args and args[0].lower() in ("confirm", "确认", "yes", "y"))
+        if not forced and not confirm:
             if gain <= 0:
                 civ = self.state["cycle_generated"]["civilization"]
                 return f"🚀 未达条件｜文明{fm(civ,notation)}/{fm(1000,notation)}"
             return f"🚀 启航｜可获得{gain}星核\n清空：资源/累计/建筑/扩建/轨道/合成/挑战\n保留：星核/科技/配方/事件/历史/启航次数/里程碑/光环/自动机\n确认：##planet launch confirm"
-        if gain <= 0:
+        if not forced and gain <= 0:
             return "⚠ 文明不足1000"
         old = self.state
         
@@ -1381,39 +1382,47 @@ class Game:
             new_ms+=self.grant_milestone("bulk_core_5")
         if gain>9 and "bulk_core_10" not in list(old.get("milestones_claimed", [])):
             new_ms+=self.grant_milestone("bulk_core_10")
-        new["techs"] = dict(old["techs"])
-        new["known_recipes"] = list(old.get("known_recipes", []))
-        new["clues_seen"] = list(old.get("clues_seen", []))
-        new["discoveries"] = list(old.get("discoveries", []))
-        new["scan_count"] = si(old.get("scan_count"), 0, 0, 10**12)
-        new["milestones_claimed"] = list(old.get("milestones_claimed", []))
-        new["auras"] = list(old.get("auras", []))
-        new["cores_total"] = old["cores_total"] + gain
-        new["cores"] = old["cores"] + gain
-        new["launches"] = old["launches"] + 1
-        new["created_at"] = self.now
-        new["lifetime_generated"] = dict(old["lifetime_generated"])
-        new["taps"] = old["taps"]
-        new["crank_count"] = old.get("crank_count", 0)
-        new["last_tick"] = self.now
-        new["best_elapsed"] = best_elapsed
-        new["crank_time_bonus"] = 0
-        new["speedrun_record"] = old.get("speedrun_record", 0)
-        new["speedrun_invalid_legacy"] = old.get("speedrun_invalid_legacy", 0)
-        new["automation_unlocked"] = bool(old.get("automation_unlocked", False))
-        new["automation_time"] = min(cl(old.get("automation_time", 0)), automation_time_cap(old))
-        new["automation_exec_level"] = si(old.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
-        new["automation_capacity_level"] = si(old.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
-        new["automation_slots_bought"] = si(old.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
-        new["automation_programs"] = dict(old.get("automation_programs", {}))
+        self.state["resources"] = new["resources"]
+        self.state["cycle_generated"] = new["cycle_generated"]
+        self.state["created_at"] = self.now
+        self.state["buildings"] = new["buildings"]
+        self.state["expansions"] = 0
+        self.state["orbit"] = "balance"
+        self.state["cores"] = self.state.get("cores",0)+gain
+        self.state["cores_total"] = self.state.get("cores_total",0)+gain
+        self.state["crafted_recipes"] = []
+        self.state["challenge_claimed"] = []
+        self.state["stage_seen"] = 0
+        self.state["last_crank"] = 0
+        self.state["crank_time_bonus"] = 0
+        if not forced:
+            self.state["launches"] = self.state.get("launches",0)+1
+        self.state["best_elapsed"] = best_elapsed
+        if (list(set(self.state.get("simulation_state",{}).values())) not in [[],[0]]):
+            for _ in self.state["simulation_state"]:
+                if _ in self.state["simulation_best"]:
+                    self.state["simulation_best"][_] = max(self.state["simulation_best"][_],self.state["simulation_state"][_])
+                else:
+                    self.state["simulation_best"][_] = self.state["simulation_state"][_]
+            self.state["simulation_state"]={}
+            self.state["simulation_args"]={}
+            score=0
+            for _ in self.state["simulation_best"]:
+                score += [__ for __ in SIMULATIONS if _["id"]==_][0]["point_mult"]*(2**self.state["simulation_best"])
+            if self.state.get('simulation_point_total',0)<score:
+                delta = score-self.state.get('simulation_point_total',0)
+                self.state['simulation_point_total'] = self.state.get('simulation_point_total',0)+delta
+                self.state['simulation_point'] = self.state.get('simulation_point',0)+delta
         if new_ms:
             names = " / ".join([ms["name"] for ms in new_ms])
             text_milestones=f"🎉 新里程碑达成：{names}！"
         notation = self.state.get("notation","standard")
-        self.state = new
         sync_global(self.gstate, self.state, self.nick, self.uid, self.now)
         time_str = fs(total_elapsed)
-        return f"🚀 启航完成｜+{gain}星核\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'],notation)}☀️\n累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"+("\n"*bool(text_milestones)+text_milestones)
+        core_text = "" if forced else f"｜+{gain}星核"
+        launch_text = "" if forced else f"累计{self.state['cores_total']}｜可用{self.state['cores']}｜第{self.state['launches']}次\n⏱️ 本次启航用时：{time_str}（实际时间+手摇加速时间）"+("\n"*bool(text_milestones)+text_milestones)
+        status = self.status() if forced else ""
+        return f"🚀 {launchtext}{core_text}\n新星{planet_code(self.state)}｜开局{fm(self.state['resources']['energy'],notation)}☀️\n{launch_text}\n{status}"
 
     def milestone(self, args):
         s = self.state
@@ -1506,7 +1515,8 @@ class Game:
             "tap", "点", "采光", "ta", "build", "b", "建筑", "建造", "dismantle", "d", "拆", "拆除",
             "orbit", "o", "轨道", "策略", "expand", "e", "扩建", "扩", "challenge", "ch", "挑战", "任务",
             "scan", "sc", "扫描", "探索", "探测", "synth", "sy", "合成", "合成器", "mix", "tech", "科技", "研究", "te",
-            "launch", "l", "启航", "跃迁", "crank", "摇", "手摇", "转", "cr", "aura", "au", "光环", "星核光环", "buff"
+            "launch", "l", "启航", "跃迁", "crank", "摇", "手摇", "转", "cr", "aura", "au", "光环", "星核光环", "buff",
+            "simulation","模拟","sim","si"
         }
         if head not in allowed:
             return False, f"自动机禁止执行：{head}"
@@ -1762,11 +1772,32 @@ class Game:
         if "bulk_core_5" not in self.state.get("milestones_claimed", []):
             return "未解锁模拟，需解锁里程碑【💠 五星好评】后方可解锁"
         else:
+            in_simulation = (list(set(self.state.get("simulation_state",{}).values())) not in [[],[0]])
             if not args:
                 lines = []
                 for _ in SIMULATIONS:
                     completions=self.state.get("simulation_best",{}).get(_["id"],0)
                     lines.append(f"{_['name']}({_['id']})｜{_['desc']}｜已通过{completions}/{_['maxlevel']}级")
+            elif args[0] in [_["id"] for _ in SIMULATIONS]:
+                if in_simulation:
+                    return "不可在模拟中再开模拟!"
+                try:
+                    level = int(args[1])
+                except:
+                    return "输入等级或模拟名有误!"
+                self.launch("",1,"开始模拟")
+                maxlevel = [_ for _ in SIMULATIONS if _["id"]==args[0]][0]["maxlevel"]
+                self.state["simulation_state"] = self.state.get("simulation_state",{})
+                self.state["simulation_args"] = {}
+                self.state["simulation_state"][args[0]] = min(max(level,1),maxlevel)
+            elif args[0] in ("mix","混合","合约","contract","m"):
+                return "coming soon"
+                levels = [int(_) for _ in args[1:]]
+            elif args[0] in ("exit","ex","退出","终止"):
+                self.state["simulation_state"] = {}
+                self.state["simulation_args"] = {}
+                self.launch("",1,"退出模拟")
+        #to do: simulation items
 
     def run(self, cmd):
         cmd = strip_prefix(cmd)
@@ -1838,6 +1869,8 @@ class Game:
                 msg = self._import(args)
             elif c in ("notation", "计数法", "记数法", "nt"):
                 msg = self.change_notation(args)
+            elif c in ("simulation","模拟","sim","si"):
+                msg = self.simulation(args)
             else:
                 msg = f"⚠ 未知命令：{parts[0]}\n##planet help 查看目录"
         quiet = {"help", "h", "帮助", "rules", "rule", "formula", "math", "version", "ver", "v", "tutorial", "教程", "atlas", "图鉴", "events", "ev", "event", "事件簿", "state", "status", "s", "st", "状态", "me", "planet", "pl", "星球", "行星", "p", "rank", "r", "排行", "排行榜", "speedrun", "sp", "竞速", "速通", "speed", "milestone", "m", "里程碑", "成就", "achieve", "aura", "au", "光环", "星核光环", "buff", "automation", "auto", "自动机", "自动化脚本", "play", "新手", "开始", "export", "导出", "ex", "import", "导入", "im", "notation", "计数法", "记数法", "nt"}
