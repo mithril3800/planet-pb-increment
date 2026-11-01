@@ -1,0 +1,53 @@
+{"schema": STATE_SCHEMA, 
+$"created_at": now, 
+-"last_tick": now, 
+"resources": r, 
+"cycle_generated": {k: 0 for k in RM}, 
+-"lifetime_generated": {k: 0 for k in RM}, 
+"buildings": {k: 0 for k in B}, 
+"orbit": "balance", "expansions": 0, $"cores": 0, $"cores_total": 0, "launches": 0, 
+-"techs": t, -"taps": 0, -"known_recipes": [], -"clues_seen": [], -"discoveries": [], "crafted_recipes": [], 
+"challenge_claimed": [], "stage_seen": 0, -"scan_count": 0, "last_crank": 0, -"crank_count": 0, -"milestones_claimed": [], 
+-"auras": [], "event_cooldown": 0, $"crank_time_bonus": 0, -"speedrun_record": 0, -"speedrun_invalid_legacy": 0, 
+-"automation_unlocked": False, -"automation_time": 0, -"automation_exec_level": 0, -"automation_capacity_level": 0, 
+-"automation_slots_bought": 0, -"automation_programs": {}, -"notation": "standard"}
+{"schema":5,"created_at":1789812831.093853,"last_tick":1789814812.1251686,
+"resources":{"energy":37715884.830865584,"mineral":20496069.502461832,"water":10398901.158052403,"air":10493993.115453977,
+"biomass":3463245.4848100645,"civilization":11922531.952706724},"
+cycle_generated":{"energy":38085634.49106267,"mineral":51283626.841855556,"water":17428258.029689644,
+"air":10869932.608902233,"biomass":3651093.997733928,"civilization":11922687.003331218},
+"lifetime_generated":{"energy":1053070106.9824942,"mineral":613973791.1869261,"water":229420162.551891,
+"air":104903759.51255248,"biomass":59238504.83572239,"civilization":380571066.49184996},
+"buildings":{"solar":1,"mine":1,"melt":1,"atmo":1,"bio":1,"city":34,"ring":3,"transmission":0},
+"orbit":"city","expansions":20,"cores":1066,"cores_total":1654,"launches":30,
+"techs":{"fusion":20,"automation":10,"cryosleep":5,"tectonics":10,"archive":0},
+"taps":20703,"known_recipes":["thermocrystal","aquaceramic","cloudgel","nitromembrane","biosilicon","orbitalcomposite"],
+"clues_seen":["thermocrystal","aquaceramic","cloudgel","nitromembrane","biosilicon","orbitalcomposite"],"
+discoveries":["black_beach","charged_cloud","green_frontier","night_sync","ring_eclipse"],"
+crafted_recipes":["thermocrystal","aquaceramic","cloudgel","nitromembrane","biosilicon","orbitalcomposite"],"challenge_claimed":[0,1,2,3,4,5,6],"stage_seen":6,"scan_count":6,"last_crank":1789813023.2519724,"crank_count":663,"milestones_claimed":["launch_1","crank_100","civ_10k","bulk_core_2","civ_100k","bulk_core_10","speedrun_10h","launch_5","speedrun_5h","speedrun_3h","bulk_core_5","launch_10","civ_1m","speedrun_1.5h"],"auras":["star","civ","atmo","bio","ocean","geo"],"event_cooldown":0,"crank_time_bonus":720.0,"speedrun_record":754.5595393180847,"speedrun_invalid_legacy":0,"automation_unlocked":true,"automation_time":7200.0,"automation_exec_level":7,"automation_capacity_level":1,"automation_slots_bought":0,"automation_programs":{"1":"tap 100；tap 100；tap 100；b 钻机 100；o 矿物；cr；sy 矿物 恒星能；ch claim；d 钻机 100；b 融冰 100；o 水","2":"e；e；e；e；e；e；e；e；e；e；e；e；e；e；e；sy 矿物 水；ch claim；d 融冰 100；b 大气 100；o 大气；cr；sy 大气 水；ch claim；d 大气 100；b 生态 100；o 生物","4":"d 日照 2；e；b 融冰；b 钻机；b 生态；e；b 大气；b 城市 100；b 轨道环 100；cr","3":"ch claim；sy 生物量 大气；d 生态 100；o 文明；b 日照 3；b 城市 100；cr；e；e；e；b 轨道环 3；sy 文明 矿物；sy 文明 生物量；ch claim","5":"l confirm"},"notation":"standard","best_elapsed":754.5595393180847}
+
+        new["techs"] = dict(old["techs"])
+        new["known_recipes"] = list(old.get("known_recipes", []))
+        new["clues_seen"] = list(old.get("clues_seen", []))
+        new["discoveries"] = list(old.get("discoveries", []))
+        new["scan_count"] = si(old.get("scan_count"), 0, 0, 10**12)
+        new["milestones_claimed"] = list(old.get("milestones_claimed", []))
+        new["auras"] = list(old.get("auras", []))
+        new["cores_total"] = old["cores_total"] + gain
+        new["cores"] = old["cores"] + gain
+        new["launches"] = old["launches"] + 1
+        new["created_at"] = self.now
+        new["lifetime_generated"] = dict(old["lifetime_generated"])
+        new["taps"] = old["taps"]
+        new["crank_count"] = old.get("crank_count", 0)
+        new["last_tick"] = self.now
+        new["best_elapsed"] = best_elapsed
+        new["crank_time_bonus"] = 0
+        new["speedrun_record"] = old.get("speedrun_record", 0)
+        new["speedrun_invalid_legacy"] = old.get("speedrun_invalid_legacy", 0)
+        new["automation_unlocked"] = bool(old.get("automation_unlocked", False))
+        new["automation_time"] = min(cl(old.get("automation_time", 0)), automation_time_cap(old))
+        new["automation_exec_level"] = si(old.get("automation_exec_level"), 0, 0, AUTO_EXEC_MAX)
+        new["automation_capacity_level"] = si(old.get("automation_capacity_level"), 0, 0, AUTO_CAPACITY_MAX)
+        new["automation_slots_bought"] = si(old.get("automation_slots_bought"), 0, 0, AUTO_MAX_BOUGHT_SLOTS)
+        new["automation_programs"] = dict(old.get("automation_programs", {}))
